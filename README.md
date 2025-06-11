@@ -1,14 +1,28 @@
-# KofBot
+# KOFBot
 
-This repository contains utilities and environments for training agents in **King of Fighters 2002 UM**.
+This repository contains utilities for training a Rainbow RDQN agent for *The King of Fighters 2002 UM* using [RLlib](https://docs.ray.io/en/latest/rllib.html).
 
-## Logging Episodes
+## Recording gameplay
 
-`KOFEnv` can optionally record every transition.  Pass a path when creating the environment:
+You can create an offline training dataset by recording gameplay or an existing agent using RLlib's rollout tool:
 
-```python
-from env import KOFEnv
-env = KOFEnv(record_path="episode_log.jsonl")
+```bash
+rllib rollout <checkpoint_path> --algo DQN --episodes 10 --out offline_data
 ```
 
-Each call to `reset()` or `step()` will append a JSON line with the keys `"obs"`, `"action"`, `"reward"`, `"next_obs"`, and `"done"`.  Call `env.flush_log()` or `env.close_log()` after an episode to make sure the data is written to disk.
+This writes JSON files under `offline_data/` that can later be used for offline learning.
+
+## Training
+
+Run `train.py` directly for online training or pass the path to a dataset for offline training:
+
+```bash
+# Online (default)
+python train.py
+
+# Offline
+python train.py --offline-dataset offline_data
+```
+
+The script will automatically switch to offline mode when the dataset path is provided.
+

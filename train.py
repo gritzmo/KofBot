@@ -103,6 +103,18 @@ if __name__ == "__main__":
     parser.add_argument("--stop-iters", type=int, default=30_000)
     parser.add_argument("--stop-timesteps", type=int, default=3_000_000)
     parser.add_argument("--stop-reward", type=float, default=350.0)
+    parser.add_argument(
+        "--offline-dataset",
+        type=str,
+        default=None,
+        help="Path to an offline dataset (JSON format). If provided, training is offline.",
+    )
+    parser.add_argument(
+        "--dataset-format",
+        type=str,
+        default="json",
+        help="Format of the offline dataset if --offline-dataset is set.",
+    )
     args = parser.parse_args()
 
     p = Process(target=plot_worker, args=(shared_action_counts, plot_stop_event), daemon=True)
@@ -110,6 +122,14 @@ if __name__ == "__main__":
 
     ray.init(ignore_reinit_error=True)
     config = get_rainbow_rdqn_config()
+
+    if args.offline_dataset:
+        config["input"] = args.offline_dataset
+        config["input_config"] = {"format": args.dataset_format}
+        print(f"Training offline using dataset: {args.offline_dataset}")
+    else:
+        config["input"] = "sampler"
+
     trainer = DQN(config=config)
 
     for i in range(args.stop_iters):
