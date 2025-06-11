@@ -107,6 +107,19 @@ def fast_press(keys, hold=0.005):
 def press_key(key, hold=0.1):
     pydirectinput.keyDown(VK[key]); time.sleep(hold); pydirectinput.keyUp(VK[key])
 
+# ---------------------------------------------------------------------------
+# Reward helper functions
+# ---------------------------------------------------------------------------
+def early_damage_reward(dmg_dealt: float, step_count: int) -> float:
+    """Bonus for damage dealt earlier in the round."""
+    decay = np.exp(-0.01 * step_count)
+    return dmg_dealt * decay
+
+
+def step_time_penalty() -> float:
+    """Small negative reward each step to encourage faster victories."""
+    return -0.01
+
 
 
 
@@ -486,6 +499,10 @@ class KOFEnv(Env):
         dmg_dealt = max(0, min(self.prev['p2'] - p2, 120))
         dmg_taken = max(0, min(self.prev['p1'] - p1, 120))
         reward    = 2.0 * dmg_dealt - 0.5 * dmg_taken
+
+        # Extra bonus for early damage and step penalty to promote quick fights
+        reward += early_damage_reward(dmg_dealt, self.nstep)
+        reward += step_time_penalty()
 
         # 5) range bonuses / penalties
         if btn_idx in [5,6,7,8]:
