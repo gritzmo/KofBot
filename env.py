@@ -26,6 +26,16 @@ LOC_PENALTY      = 0.1  # reward subtracted when idle too long
 REPEAT_THRESHOLD = 4 # repeated same action before penalty
 REPEAT_PENALTY   = 50   # reward subtracted when action repeated too much
 
+# --- Additional aggression bonuses ---
+# Consecutive frames within close range of the opponent
+CLOSE_RANGE_DIST   = 50      # distance threshold for "close"
+CLOSE_RANGE_FRAMES = 20      # how many consecutive frames to trigger bonus
+CLOSE_RANGE_BONUS  = 1.0     # reward for staying close
+
+# Bonus when opponent's guard gauge is nearly depleted and a hit lands
+GUARD_CRUSH_THRESHOLD = 10
+GUARD_CRUSH_BONUS     = 2.0
+
 
 
 # Eliminate internal pauses in pydirectinput for max speed
@@ -129,6 +139,8 @@ class KOFEnv(Env):
         # attach to process
          # track how many consecutive frames the agent has moved TOWARD opponent
         self.approach_count = 0
+        # track how long we maintain close proximity to the opponent
+        self.close_range_count = 0
       
        
 
@@ -528,6 +540,23 @@ class KOFEnv(Env):
                 reward += 0.05; print("⬆️ Closing in +0.05")
             elif distance > prev_dist:
                 reward -= 0.01; print("⬇️ Backing off −0.01")
+
+        # --- New aggressive incentives ---
+        #  a) Staying within CLOSE_RANGE_DIST for consecutive frames
+        if distance < CLOSE_RANGE_DIST:
+            self.close_range_count += 1
+            if self.close_range_count >= CLOSE_RANGE_FRAMES:
+                reward += CLOSE_RANGE_BONUS
+                print(f"🔴 Close-range streak +{CLOSE_RANGE_BONUS} (count={self.close_range_count})")
+                self.close_range_count = 0
+        else:
+            self.close_range_count = 0
+
+        #  b) Guard crush reward when opponent's guard is very low and we land a hit
+        p2_guard = obs[5]
+        if p2_guard <= GUARD_CRUSH_THRESHOLD and dmg_dealt > 0:
+            reward += GUARD_CRUSH_BONUS
+            print(f"🛡️ Guard crush! +{GUARD_CRUSH_BONUS}")
 
           # 10) “move‐toward‐opponent” streak bonus & same‐location penalty (new)
         if p2_x is not None and p1_x is not None:
