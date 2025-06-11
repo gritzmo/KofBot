@@ -37,6 +37,10 @@ CLOSE_RANGE_BONUS  = 1.0     # reward for staying close
 GUARD_CRUSH_THRESHOLD = 10
 GUARD_CRUSH_BONUS     = 2.0
 
+# Reward scales for high-damage combos
+COMBO_HIT_BONUS    = 0.5   # bonus per hit beyond the first when a combo ends
+COMBO_DAMAGE_SCALE = 0.05  # multiplier for total damage dealt during a combo
+
 
 
 # Eliminate internal pauses in pydirectinput for max speed
@@ -130,6 +134,18 @@ def early_damage_reward(dmg_dealt: float, step_count: int) -> float:
 def step_time_penalty() -> float:
     """Small negative reward each step to encourage faster victories."""
     return -0.01
+
+
+def combo_hits_reward(combo_hits: int) -> float:
+    """Bonus based on the number of hits in a finished combo."""
+    if combo_hits <= 1:
+        return 0.0
+    return (combo_hits - 1) * COMBO_HIT_BONUS
+
+
+def combo_damage_reward(combo_damage: float) -> float:
+    """Bonus proportional to total damage dealt in a combo."""
+    return combo_damage * COMBO_DAMAGE_SCALE
 
 
 
@@ -543,20 +559,22 @@ class KOFEnv(Env):
         # 6) finishing combos
         combo_ended = (prev_hits > 0 and hit_ct == 0)
         if combo_ended:
-            # **compute bonuses from hits and from damage dealt during combo**
-            hit_bonus = 1 * (prev_hits*1)
-
-            dmg_bonus = 2 * prev_combo_dmg
+            # Bonuses based on hits and total damage inflicted
+            hit_bonus = combo_hits_reward(prev_hits)
+            dmg_bonus = combo_damage_reward(prev_combo_dmg)
             combo_bonus = hit_bonus + dmg_bonus
             reward += combo_bonus
-            print(f"🔥 {prev_hits}-hit FINISH +{hit_bonus:.1f} hits +{dmg_bonus:.1f} dmg = {combo_bonus:.1f}")
-            prev_combo_dmg = 0  # reset after awarding**
+            print(
+                f"🔥 {prev_hits}-hit combo for {prev_combo_dmg:.1f} dmg +{combo_bonus:.1f}"
+            )
+            prev_combo_dmg = 0  # reset after awarding
 
         # 7) combo step rewards (optional)
         delta_hits = hit_ct - prev_hits
         if delta_hits > 0 and not combo_ended:
-            reward += delta_hits * 2
-            print(f"↗ Combo +{delta_hits*2}")
+            step_bonus = combo_hits_reward(hit_ct) - combo_hits_reward(prev_hits)
+            reward += step_bonus
+            print(f"↗ Combo hit +{step_bonus:.2f}")
 
         # 8) super meter shaping
         if my_super > prev_super:
