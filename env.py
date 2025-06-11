@@ -14,6 +14,7 @@ import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 from ReadWriteMemory import ReadWriteMemory
 from colorama import init, Fore, Style
+import json
 
 TF_ENABLE_ONEDNN_OPTS = 0  # Disable oneDNN optimizations for reproducibility
 
@@ -139,11 +140,18 @@ class KOFEnv(Env):
 
     def __init__(self,
                  process_name="KingOfFighters2002UM_x64.exe",
-                 window_title="King of Fighters 2002 Unlimited Match"):
+                 window_title="King of Fighters 2002 Unlimited Match",
+                 record_path: str | None = None):
         super().__init__()
-        
 
-          # at top of __init__
+        self.record_path = record_path
+        self._log_fh = None
+        self._last_obs = None
+        if self.record_path:
+            os.makedirs(os.path.dirname(self.record_path) or '.', exist_ok=True)
+            self._log_fh = open(self.record_path, 'a', buffering=1)
+
+        # at top of __init__
         self.in_transition = False
         self._transition_start = None
         self._transition_duration = 0.5  
@@ -438,8 +446,16 @@ class KOFEnv(Env):
 
         # clear out history on reset
         self.code_history = deque([(0,0)]*self.HISTORY_LEN, maxlen=self.HISTORY_LEN)
-        
 
+        self._last_obs = obs
+        if self._log_fh:
+            self._log_fh.write(json.dumps({
+                "obs": obs.tolist(),
+                "action": None,
+                "reward": None,
+                "next_obs": None,
+                "done": False
+            }) + "\n")
 
         return obs, {}
 
@@ -451,6 +467,7 @@ class KOFEnv(Env):
 
     def step(self, action):
         print("Step:", self.nstep)
+        obs_prev = self._last_obs
         self.nstep += 1
         STRIKING_RANGE = 63
         win32gui.SetForegroundWindow(self.hwnd)
@@ -609,8 +626,18 @@ class KOFEnv(Env):
             reward -= 10 * self.lose_streak; print(f"❌ P1 defeated −{reward}")
             self.round = 0
             self.lose_streak += 1
-            
+
             obs, _ = self.reset()
+            done = True
+            if self._log_fh:
+                self._log_fh.write(json.dumps({
+                    "obs": None if obs_prev is None else obs_prev.tolist(),
+                    "action": action.tolist() if hasattr(action, "tolist") else action,
+                    "reward": reward,
+                    "next_obs": obs.tolist(),
+                    "done": done
+                }) + "\n")
+            self._last_obs = obs
             return obs, reward, True, False, {}
         if p2_hp > DEFEAT_THRESHOLD and p1_hp <= DEFEAT_THRESHOLD:
             self.round += 1
@@ -621,6 +648,18 @@ class KOFEnv(Env):
                 print
             reward += 100 * self.round; print(f"🏆 P2 defeated + {reward}")
             time.sleep(11)
+            obs_next, _ = self.reset()
+            done = True
+            if self._log_fh:
+                self._log_fh.write(json.dumps({
+                    "obs": None if obs_prev is None else obs_prev.tolist(),
+                    "action": action.tolist() if hasattr(action, "tolist") else action,
+                    "reward": reward,
+                    "next_obs": obs_next.tolist(),
+                    "done": done
+                }) + "\n")
+            self._last_obs = obs_next
+            return obs_next, reward, True, False, {}
 
         # ── NOW update combo_dmg in prev: ──
         if hit_ct > 0:
@@ -680,7 +719,32 @@ class KOFEnv(Env):
         print(m['color'] + f"Action: {m['name']} | HP P1:{p1:.0f} P2:{p2:.0f}" + Style.RESET_ALL)
         print(f"P1 combo: {hit_ct} (prev {prev_hits}) | Return: {self.current_return:.2f}")
 
+        done = False
+        if self._log_fh:
+            self._log_fh.write(json.dumps({
+                "obs": None if obs_prev is None else obs_prev.tolist(),
+                "action": action.tolist() if hasattr(action, "tolist") else action,
+                "reward": reward,
+                "next_obs": obs.tolist(),
+                "done": done
+            }) + "\n")
+        self._last_obs = obs
         return obs, reward, False, False, {}
+
+    def flush_log(self):
+        """Flush the recording file if logging is enabled."""
+        if self._log_fh:
+            self._log_fh.flush()
+
+    def close_log(self):
+        """Close the recording file if it is open."""
+        if self._log_fh:
+            self._log_fh.flush()
+            self._log_fh.close()
+            self._log_fh = None
+
+    def close(self):
+        self.close_log()
 
 
 
