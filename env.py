@@ -198,17 +198,24 @@ class KOFEnv(Env):
                  record_path: str | None = None):
         super().__init__()
 
+        def log(msg: str) -> None:
+            """Utility for initialization progress messages."""
+            print(f"[KOFEnv:init] {msg}", flush=True)
+
+        log("Starting environment initialization")
+
         self.record_path = record_path
         self._log_fh = None
         self._last_obs = None
         if self.record_path:
             os.makedirs(os.path.dirname(self.record_path) or '.', exist_ok=True)
             self._log_fh = open(self.record_path, 'a', buffering=1)
+            log(f"Logging enabled: {self.record_path}")
 
         # at top of __init__
         self.in_transition = False
         self._transition_start = None
-        self._transition_duration = 0.5  
+        self._transition_duration = 0.5
         self.round = 0
         self.nstep = 0
         # attach to process
@@ -223,21 +230,24 @@ class KOFEnv(Env):
         self.FWD_BONUS = 0.5        # once you hit 5 consecutive, give +0.1
             
         self.zerolimit = 0
+        log(f"Searching for process '{process_name}'")
         self.rwm = ReadWriteMemory()
         self.process = self.rwm.get_process_by_name(process_name)
         if not self.process:
             raise Exception(f"Process '{process_name}' not found.")
+        log("Opening process handle")
         self.process.open()
         self.handle = self.process.handle
-        # window for focus
+        log(f"Looking for window titled '{window_title}'")
         self.hwnd = win32gui.FindWindow(None, window_title)
         if not self.hwnd:
             raise Exception("Game window not found; check `window_title`.")
+        log("Window handle obtained")
 
 
 
         # ─── History of action‐state codes ───
-        
+
         self.HISTORY_LEN = 100
         # each entry is a pair (p1_code, p2_code)
         self.code_history = deque([(0,0)]*self.HISTORY_LEN, maxlen=self.HISTORY_LEN)
@@ -247,6 +257,7 @@ class KOFEnv(Env):
         self.observation_space = Box(0, 2**32-1, (obs_dim,), np.float32)
         MAX_HOLD = 10  # max hold time for actions
         self.action_space = MultiDiscrete([len(action_map), MAX_HOLD+1])
+        log("Observation and action spaces configured")
 
         # store previous HPs for reward
         self.prev = {'p1':None, 'p2':None}
@@ -279,6 +290,7 @@ class KOFEnv(Env):
         # input buffer
         self.key_buffer = None
         self.buffer_remaining = 0
+        log("Initialization complete")
 
     
     def _read(self, addr):
