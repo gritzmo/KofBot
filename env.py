@@ -6,12 +6,9 @@ from gymnasium import Env
 from gymnasium.spaces import Box, MultiDiscrete
 import win32gui
 import pydirectinput
-import matplotlib.pyplot as plt
 from collections import deque
 import torch
 import os
-import matplotlib.cm as cm
-import matplotlib.colors as mcolors
 from ReadWriteMemory import ReadWriteMemory
 from colorama import init, Fore, Style
 import json
@@ -19,7 +16,6 @@ import json
 TF_ENABLE_ONEDNN_OPTS = 0  # Disable oneDNN optimizations for reproducibility
 
 torch.set_num_threads( min(8, os.cpu_count()) )
-plt.ion()
 
 # --- Constants for penalizing idle/repeat behavior ≪ADDED≫ ---
 LOC_THRESHOLD    = 500    # steps staying in place before penalty
@@ -279,49 +275,10 @@ class KOFEnv(Env):
         self.action_counts = np.zeros(self.n_actions, dtype=int)
         self.bar_update_counter = 0
         self.bar_update_interval = 5   # redraw once every 5 steps
-        
+
         # input buffer
         self.key_buffer = None
         self.buffer_remaining = 0
-
-        # ------------------------------------------------------------------
-        # MERGED PLOTTING: one window with two subplots
-        # ------------------------------------------------------------------
-        # returns on the left, actions on the right
-        self.fig, (self.ax_ret, self.ax_act) = plt.subplots(
-            1, 2, figsize=(8, 3), constrained_layout=True
-        )
-
-        # (a) Returns subplot (unchanged):
-        self.ret_line, = self.ax_ret.plot([], [], lw=2)
-        self.ax_ret.set_xlabel("Episode")
-        self.ax_ret.set_ylabel("Return")
-        self.ax_ret.set_title("Returns per Episode")
-        self.ax_ret.grid(True)
-
-         # (b) Action subplot: create bars at height=0 initially.
-        #     We’ll color them from a valid Matplotlib colormap (e.g. tab20).
-
-        cmap = cm.get_cmap("tab20", self.n_actions)
-        bar_colors = [mcolors.to_hex(cmap(i)) for i in range(self.n_actions)]
-        self.bars = self.ax_act.bar(
-            range(self.n_actions),
-            np.zeros(self.n_actions),
-            color=bar_colors,
-        )
-        self.ax_act.set_xlabel("Action")
-        self.ax_act.set_ylabel("Usage %")
-        self.ax_act.set_title("Action Distribution (live)")
-        self.ax_act.set_xticks(range(self.n_actions))
-        self.ax_act.set_xticklabels(
-            [action_map[a]['name'] for a in range(self.n_actions)],
-            rotation=45, ha='right'
-        )
-        self.ax_act.set_ylim(0, 100)   # Percentages range 0–100
-
-        # Finally, draw the initial empty figure:
-        self.fig.canvas.draw()
-        plt.pause(0.05)
 
     
     def _read(self, addr):
@@ -388,44 +345,24 @@ class KOFEnv(Env):
         if self.episode_rewards or self.current_return != 0.0:
             # update returns data
             self.episode_rewards.append(self.current_return)
-            x = np.arange(1, len(self.episode_rewards) + 1)
-            y = self.episode_rewards
-            # update returns subplot
-            self.ret_line.set_data(x, y)
-            self.ax_ret.relim()
-            self.ax_ret.autoscale_view()
-
-            # compute action percentages
-            total = max(self.action_counts.sum(), 1)
-            pct = self.action_counts / total * 100
-            # update actions bars
-            for bar, h in zip(self.bars, pct):
-                bar.set_height(h)
-
-            # redraw combined figure
-            self.fig.canvas.draw()
-            self.fig.canvas.flush_events()
-            
-
             # store & log
             self.episode_action_counts.append(self.action_counts.copy())
             ep = len(self.episode_rewards)
             ret = self.episode_rewards[-1]
+            total = max(self.action_counts.sum(), 1)
             pct_ = (self.action_counts / total * 100).round(1)
-            print(f"Episode {ep}: Return={ret:.2f} | Action %: " +
-                  ", ".join(f"{action_map[i]['name']}={pct_[i]}%" for i in range(self.n_actions)))
+            total_reward = sum(self.episode_rewards)
+            print(
+                f"Episode {ep}: Return={ret:.2f} | Total={total_reward:.2f} | "
+                + ", ".join(
+                    f"{action_map[i]['name']}={pct_[i]}%" for i in range(self.n_actions)
+                )
+            )
             print("-" * 60)
 
         # reset counters
         self.action_counts.fill(0)
         self.bar_update_counter = 0
-
-        # redraw both canvases
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
-
-        # give the GUI a moment
-        plt.pause(0.001)
 
         # handle P1 defeat animation and Enter
         raw_p1 = self._read(ADDR['p1_hp'])
@@ -488,7 +425,6 @@ class KOFEnv(Env):
         
 
         obs = self._get_obs()
-        print(f"P1 HP:", obs[0], "P2 HP:", obs[1])
         obs = np.array(obs, dtype=np.float32)
     
     
@@ -524,7 +460,7 @@ class KOFEnv(Env):
 
 
     def step(self, action):
-        print("Step:", self.nstep)
+        # single-step update
         obs_prev = self._last_obs
         self.nstep += 1
         STRIKING_RANGE = 63
@@ -571,10 +507,7 @@ class KOFEnv(Env):
 
         # 3) read obs
         obs        = self._get_obs()
-        print(f"P1 HP:", obs[0], "P2 HP:", obs[1])
         p1, p2     = obs[0], obs[1]
-        print("I READ YA! X3")
-        print(f"P1 HP:", obs[0], "P2 HP:", obs[1])
         p1_x, p2_x = obs[6], obs[7]
         raw_hits   = int(obs[10])
         hit_ct     = raw_hits & 0xFF    # mask down to 0–255
@@ -791,10 +724,14 @@ class KOFEnv(Env):
                 "my_super": my_super,
             })
 
-        # 14) final logging
+        # 14) final logging - single line update
         m = action_map[btn_idx]
-        print(m['color'] + f"Action: {m['name']} | HP P1:{p1:.0f} P2:{p2:.0f}" + Style.RESET_ALL)
-        print(f"P1 combo: {hit_ct} (prev {prev_hits}) | Return: {self.current_return:.2f}")
+        status = (
+            f"Step {self.nstep:5d} | Action: {m['name']} | "
+            f"HP P1:{p1:.0f} P2:{p2:.0f} | "
+            f"Return: {self.current_return:.2f}"
+        )
+        print(m['color'] + status + Style.RESET_ALL, end='\r', flush=True)
 
         done = False
         if self._log_fh:

@@ -1,8 +1,4 @@
 import time
-import numpy as np
-import matplotlib.pyplot as plt
-from multiprocessing import Process, Array, Event
-
 from env import KOFEnv, action_map
 from wrappers import KOFActionRepeatEnv
 
@@ -11,43 +7,6 @@ from ray.tune.registry import register_env
 import ray
 from ray.rllib.algorithms.dqn import DQN
 import argparse
-
-# Shared plotting utilities
-N_ACTIONS = len(action_map)
-shared_action_counts = Array('i', N_ACTIONS, lock=True)
-plot_stop_event = Event()
-
-def plot_worker(shared_counts: Array, stop_event: Event):
-    n = len(shared_counts)
-    fig, ax = plt.subplots(figsize=(6, 4))
-    plt.ion()
-
-    colors = [action_map[i]['color'] for i in range(n)]
-    bars = ax.bar(range(n), [0]*n, color=colors)
-    ax.set_ylim(0, 100)
-    ax.set_xlabel("Action")
-    ax.set_ylabel("Usage %")
-    ax.set_title("Live Action Distribution")
-    ax.set_xticks(range(n))
-    ax.set_xticklabels([action_map[i]['name'] for i in range(n)], rotation=45, ha='right')
-
-    fig.canvas.draw()
-    plt.pause(0.01)
-
-    while not stop_event.is_set():
-        counts = np.frombuffer(shared_counts.get_obj(), dtype=np.int32).copy()
-        total = counts.sum() if counts.sum() > 0 else 1
-        percentages = counts / total * 100.0
-
-        for bar, h in zip(bars, percentages):
-            bar.set_height(h)
-
-        fig.canvas.draw_idle()
-        fig.canvas.flush_events()
-        time.sleep(0.1)
-
-    plt.close(fig)
-
 
 def kof_rainbow_env_creator(env_config: EnvContext):
     frame_skip = env_config.get("frame_skip", 1)
@@ -117,9 +76,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    p = Process(target=plot_worker, args=(shared_action_counts, plot_stop_event), daemon=True)
-    p.start()
-
     ray.init(ignore_reinit_error=True)
     config = get_rainbow_rdqn_config()
 
@@ -146,9 +102,6 @@ if __name__ == "__main__":
         if (mean_reward is not None and mean_reward >= args.stop_reward) or total_ts >= args.stop_timesteps:
             print("Stopping!")
             break
-
-    plot_stop_event.set()
-    p.join()
 
     checkpoint_path = trainer.save("./kof_rainbow_rdqn_checkpoints")
     print(f"Checkpoint saved at: {checkpoint_path}")
