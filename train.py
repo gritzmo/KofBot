@@ -6,7 +6,7 @@ from wrappers import KOFActionRepeatEnv
 from ray.rllib.env.env_context import EnvContext
 from ray.tune.registry import register_env
 import ray
-from ray.rllib.algorithms.dqn import DQN
+from ray.rllib.algorithms.dqn import DQN, DQNConfig
 import argparse
 
 def kof_rainbow_env_creator(env_config: EnvContext):
@@ -17,43 +17,48 @@ def kof_rainbow_env_creator(env_config: EnvContext):
 register_env("KOF-RDQN-v0", kof_rainbow_env_creator)
 
 
-def get_rainbow_rdqn_config():
-    return {
-        "env": "KOF-RDQN-v0",
-        "env_config": {
-            "base_env_cls": KOFEnv,
-            "frame_skip": 1,
-        },
-        "num_workers": 0,
-        "num_gpus": 0,
-        "framework": "torch",
-        "batch_mode": "complete_episodes",
-        "model": {
-            "use_lstm": True,
-            "lstm_cell_size": 256,
-            "noisy": True,
-            "dueling": True,
-            "num_atoms": 51,
-            "v_min": -10.0,
-            "v_max": 10.0,
-        },
-        "buffer_size": 500_000,
-        "n_step": 3,
-        "replay_sequence_length": 20,
-        "burn_in": 5,
-        "zero_init_states": False,
-        "exploration_config": {},
-        "learning_starts": 100_000,
-        "train_batch_size": 64,
-        "target_network_update_freq": 1_000,
-        "lr": 1e-4,
-        "gamma": 0.99,
-        "double_q": True,
-        "prioritized_replay": True,
-        "prioritized_replay_alpha": 0.6,
-        "prioritized_replay_beta": 0.4,
-        "prioritized_replay_eps": 1e-6,
-    }
+def get_rainbow_rdqn_config() -> dict:
+    """Return a dictionary config for Rainbow RDQN using RLlib's builder API."""
+    cfg = (
+        DQNConfig()
+        .environment(
+            "KOF-RDQN-v0",
+            env_config={"base_env_cls": KOFEnv, "frame_skip": 1},
+        )
+        .rollouts(num_rollout_workers=0, batch_mode="complete_episodes")
+        .framework("torch")
+        .resources(num_gpus=0)
+        .training(
+            model={
+                "use_lstm": True,
+                "lstm_cell_size": 256,
+                "noisy": True,
+                "dueling": True,
+                "num_atoms": 51,
+                "v_min": -10.0,
+                "v_max": 10.0,
+            },
+            n_step=3,
+            replay_sequence_length=20,
+            burn_in=5,
+            zero_init_states=False,
+            exploration_config={},
+            num_steps_sampled_before_learning_starts=100_000,
+            train_batch_size=64,
+            target_network_update_freq=1_000,
+            lr=1e-4,
+            gamma=0.99,
+            double_q=True,
+            replay_buffer_config={
+                "type": "MultiAgentPrioritizedReplayBuffer",
+                "capacity": 500_000,
+                "prioritized_replay_alpha": 0.6,
+                "prioritized_replay_beta": 0.4,
+                "prioritized_replay_eps": 1e-6,
+            },
+        )
+    )
+    return cfg.to_dict()
 
 
 if __name__ == "__main__":
