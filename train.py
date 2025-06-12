@@ -49,10 +49,13 @@ def get_rainbow_rdqn_config():
         "lr": 1e-4,
         "gamma": 0.99,
         "double_q": True,
-        "prioritized_replay": True,
-        "prioritized_replay_alpha": 0.6,
-        "prioritized_replay_beta": 0.4,
-        "prioritized_replay_eps": 1e-6,
+        # Use prioritized replay buffer via new replay_buffer_config API.
+        "replay_buffer_config": {
+            "type": "MultiAgentPrioritizedReplayBuffer",
+            "prioritized_replay_alpha": 0.6,
+            "prioritized_replay_beta": 0.4,
+            "prioritized_replay_eps": 1e-6,
+        },
     }
 
 
