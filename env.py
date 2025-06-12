@@ -148,6 +148,48 @@ def combo_damage_reward(combo_damage: float) -> float:
     return combo_damage * COMBO_DAMAGE_SCALE
 
 
+def repeat_action_penalty(current: int, last: int | None,
+                          repeat_count: int) -> tuple[float, int]:
+    """Penalty when the same action is repeated too many times."""
+    if current == last:
+        repeat_count += 1
+    else:
+        repeat_count = 0
+    if repeat_count >= REPEAT_THRESHOLD:
+        return -REPEAT_PENALTY, repeat_count
+    return 0.0, repeat_count
+
+
+def out_of_range_penalty(distance: float, action_idx: int,
+                         dmg_dealt: float, striking_range: float) -> float:
+    """Penalty for attacking when too far away."""
+    if action_idx in [5, 6, 7, 8] and distance > striking_range and dmg_dealt <= 0:
+        return -0.25
+    return 0.0
+
+
+def stationary_penalty(count: int) -> float:
+    """Penalty for staying in one location too long."""
+    if count > LOC_THRESHOLD:
+        return -LOC_PENALTY
+    return 0.0
+
+
+def retreat_penalty(distance: float, prev_distance: float,
+                    action_idx: int) -> float:
+    """Small penalty each frame the agent moves away from the opponent."""
+    if action_idx in [1, 2] and distance > prev_distance:
+        return -0.01
+    return 0.0
+
+
+def approach_streak_bonus(count: int, threshold: int, bonus: float) -> float:
+    """Bonus when moving toward the opponent for several frames."""
+    if count >= threshold:
+        return bonus
+    return 0.0
+
+
 
 
 
@@ -549,12 +591,22 @@ class KOFEnv(Env):
         reward += early_damage_reward(dmg_dealt, self.nstep)
         reward += step_time_penalty()
 
+        # Penalize excessive action repetition
+        rep_pen, self.repeat_count = repeat_action_penalty(
+            btn_idx, self.last_action, self.repeat_count
+        )
+        reward += rep_pen
+        if rep_pen:
+            print(f"\U0001f501 Repeat penalty {rep_pen}")
+
         # 5) range bonuses / penalties
-        if btn_idx in [5,6,7,8]:
-            if distance <= STRIKING_RANGE and dmg_dealt > 0:
-                reward += 1; print("✅ Hit in range +50")
-            elif distance > STRIKING_RANGE:
-                reward -= 0.25;  print("💨 Out-of-range attack −25")
+        if btn_idx in [5,6,7,8] and distance <= STRIKING_RANGE and dmg_dealt > 0:
+            reward += 1
+            print("✅ Hit in range +50")
+        out_pen = out_of_range_penalty(distance, btn_idx, dmg_dealt, STRIKING_RANGE)
+        if out_pen:
+            reward += out_pen
+            print("💨 Out-of-range attack −25")
 
         # 6) finishing combos
         combo_ended = (prev_hits > 0 and hit_ct == 0)
@@ -585,13 +637,18 @@ class KOFEnv(Env):
             reward += 10; print("💥 Mega move landed +10")
 
         # 9) closing / retreat shaping
-        prev_dist = (abs(self.prev['p1_location'] - self.prev['p2_location'])
-                    if self.prev['p1_location'] is not None else distance)
-        if btn_idx in [1,2]:
-            if distance < prev_dist:
-                reward += 0.05; print("⬆️ Closing in +0.05")
-            elif distance > prev_dist:
-                reward -= 0.01; print("⬇️ Backing off −0.01")
+        prev_dist = (
+            abs(self.prev['p1_location'] - self.prev['p2_location'])
+            if self.prev['p1_location'] is not None
+            else distance
+        )
+        if btn_idx in [1, 2] and distance < prev_dist:
+            reward += 0.05
+            print("⬆️ Closing in +0.05")
+        ret_pen = retreat_penalty(distance, prev_dist, btn_idx)
+        if ret_pen:
+            reward += ret_pen
+            print("⬇️ Backing off −0.01")
 
         # --- New aggressive incentives ---
         #  a) Staying within CLOSE_RANGE_DIST for consecutive frames
@@ -612,7 +669,6 @@ class KOFEnv(Env):
 
           # 10) “move‐toward‐opponent” streak bonus & same‐location penalty (new)
         if p2_x is not None and p1_x is not None:
-            # If opponent is to our right and we pressed “right,” or opponent to left and we pressed “left”:
             if (p2_x > p1_x and btn_idx == 2) or (p2_x < p1_x and btn_idx == 1):
                 self.approach_count += 1
             else:
@@ -620,9 +676,12 @@ class KOFEnv(Env):
         else:
             self.approach_count = 0
 
-        if self.approach_count == self.FWD_THRESHOLD:
-            reward += self.FWD_BONUS
-            print(f"➡️ Approach streak bonus +{self.FWD_BONUS:.2f} (count={self.approach_count})")
+        streak_bonus = approach_streak_bonus(
+            self.approach_count, self.FWD_THRESHOLD, self.FWD_BONUS
+        )
+        if streak_bonus:
+            reward += streak_bonus
+            print(f"➡️ Approach streak bonus +{streak_bonus:.2f} (count={self.approach_count})")
 
 
        # 10) stay‐in‐place drain (penalize if P1 stays in same x‐location too many steps)
@@ -632,10 +691,10 @@ class KOFEnv(Env):
         else:
             self.same_loc_count = 0
 
-        # Once we exceed LOC_THRESHOLD consecutive “same‐spot” steps, subtract LOC_PENALTY
-        if self.same_loc_count > LOC_THRESHOLD:
-            reward -= LOC_PENALTY
-            print(f"⏳ Idle‐location penalty −{LOC_PENALTY} (count={self.same_loc_count})")
+        loc_pen = stationary_penalty(self.same_loc_count)
+        if loc_pen:
+            reward += loc_pen
+            print(f"⏳ Idle-location penalty {loc_pen} (count={self.same_loc_count})")
 
         # 11) defeat checks
         p1_hp = self._read(ADDR['p1_hp'])
