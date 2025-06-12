@@ -37,7 +37,6 @@ def get_rainbow_rdqn_config():
             "v_min": -10.0,
             "v_max": 10.0,
         },
-        "buffer_size": 500_000,
         "n_step": 3,
         "replay_sequence_length": 20,
         "burn_in": 5,
@@ -49,9 +48,10 @@ def get_rainbow_rdqn_config():
         "lr": 1e-4,
         "gamma": 0.99,
         "double_q": True,
-        # Use prioritized replay buffer via new replay_buffer_config API.
+        # Configure prioritized replay buffer via new replay_buffer_config API.
         "replay_buffer_config": {
             "type": "MultiAgentPrioritizedReplayBuffer",
+            "capacity": 500_000,
             "prioritized_replay_alpha": 0.6,
             "prioritized_replay_beta": 0.4,
             "prioritized_replay_eps": 1e-6,
