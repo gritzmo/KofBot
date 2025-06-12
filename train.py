@@ -1,4 +1,5 @@
 import time
+import os
 from env import KOFEnv, action_map
 from wrappers import KOFActionRepeatEnv
 
@@ -63,27 +64,59 @@ if __name__ == "__main__":
     parser.add_argument("--stop-timesteps", type=int, default=3_000_000)
     parser.add_argument("--stop-reward", type=float, default=350.0)
     parser.add_argument(
+        "--mode",
+        choices=["online", "offline"],
+        default=None,
+        help=(
+            "Training mode. If omitted, you will be prompted at startup."
+        ),
+    )
+    parser.add_argument(
         "--offline-dataset",
         type=str,
         default=None,
-        help="Path to an offline dataset (JSON format). If provided, training is offline.",
+        help="Path to an offline dataset (JSON format) used when in offline mode.",
     )
     parser.add_argument(
         "--dataset-format",
         type=str,
         default="json",
-        help="Format of the offline dataset if --offline-dataset is set.",
+        help="Format of the offline dataset if provided.",
     )
     args = parser.parse_args()
 
     ray.init(ignore_reinit_error=True)
     config = get_rainbow_rdqn_config()
 
-    if args.offline_dataset:
-        config["input"] = args.offline_dataset
+    # Determine training mode.
+    mode = args.mode
+    if mode is None:
+        # Prompt the user when no mode is specified via CLI.
+        while True:
+            choice = input("Select mode: [o]nline or [f]offline? ").strip().lower()
+            if choice in ("o", "online"):
+                mode = "online"
+                break
+            if choice in ("f", "offline"):
+                mode = "offline"
+                break
+            print("Please enter 'o' for online or 'f' for offline.")
+
+    if mode == "offline":
+        dataset = args.offline_dataset
+        if dataset is None:
+            prompt = "Enter path to offline dataset [default: ./dataset]: "
+            dataset = input(prompt).strip()
+        if not dataset:
+            dataset = os.path.join(os.path.dirname(__file__), "dataset")
+            os.makedirs(dataset, exist_ok=True)
+            print(f"Created default dataset directory at {dataset}")
+        config["input"] = dataset
         config["input_config"] = {"format": args.dataset_format}
-        print(f"Training offline using dataset: {args.offline_dataset}")
+        print(f"Training offline using dataset: {dataset}")
     else:
+        if args.offline_dataset:
+            print("Warning: --offline-dataset specified but mode is online; ignoring dataset path.")
         config["input"] = "sampler"
 
     trainer = DQN(config=config)
