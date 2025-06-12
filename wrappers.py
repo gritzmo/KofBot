@@ -17,8 +17,14 @@ class KOFActionRepeatEnv(Env):
             frame_skip: how many emulator ticks to hold each button before asking agent again
         """
         super().__init__()
+
+        def log(msg: str) -> None:
+            print(f"[KOFActionRepeatEnv:init] {msg}", flush=True)
+
+        log("Creating base environment")
         # Instantiate the underlying KOFEnv
         self.orig_env: KOFEnv = base_env_cls()
+        log("Base environment created")
 
         # Ensure original action_space is MultiDiscrete([n_buttons, max_hold])
         assert isinstance(self.orig_env.action_space, MultiDiscrete), \
@@ -29,9 +35,11 @@ class KOFActionRepeatEnv(Env):
         self.action_space = Discrete(self.num_buttons)
         # Observation space remains the same
         self.observation_space = self.orig_env.observation_space
+        log("Observation and action spaces set")
 
         self.frame_skip = int(frame_skip)
         self.key_buffer = None
+        log("Wrapper initialization complete")
 
     def reset(self, **kwargs):
         """
