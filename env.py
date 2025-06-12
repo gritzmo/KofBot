@@ -267,7 +267,6 @@ class KOFEnv(Env):
         self.prev['p1_super'] = None
         self.prev['combo_len']   = 0
         self.prev['p2_char_id'] = None
-        prev_combo_dmg = self.prev.get('combo_dmg', 0)
 
         self.episode_rewards = []
         # new: track per-episode totals
@@ -371,6 +370,14 @@ class KOFEnv(Env):
                 )
             )
             print("-" * 60)
+
+        # reset per-episode state
+        self.current_return = 0.0
+        self.approach_count = 0
+        self.close_range_count = 0
+        self.same_loc_count = 0
+        self.repeat_count = 0
+        self.last_action = None
 
         # reset counters
         self.action_counts.fill(0)
@@ -667,7 +674,7 @@ class KOFEnv(Env):
             if self.lose_streak == 0:
                 reward += 25
                 print(f"🎉 Redemption Bonus! + {reward}")
-                print
+                print()
             reward += 100 * self.round; print(f"🏆 P2 defeated + {reward}")
             time.sleep(11)
             obs_next, _ = self.reset()
