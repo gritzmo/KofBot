@@ -14,15 +14,20 @@ This writes JSON files under `offline_data/` that can later be used for offline 
 
 ## Training
 
-Run `train.py` directly for online training or pass the path to a dataset for offline training:
+`train.py` can operate in either online or offline mode. You can explicitly set
+the mode using the `--mode` flag or leave it off and choose interactively at
+startup:
 
 ```bash
-# Online (default)
-python train.py
+# Online
+python train.py --mode online
 
 # Offline
-python train.py --offline-dataset offline_data
+python train.py --mode offline --offline-dataset offline_data
 ```
 
-The script will automatically switch to offline mode when the dataset path is provided.
+If `--mode` is not given, `train.py` prompts you to pick a mode. When
+selecting offline mode you can specify a dataset path or leave it blank. If you
+leave it blank, a `dataset/` folder will be created next to `train.py` and used
+as the dataset location.
 
