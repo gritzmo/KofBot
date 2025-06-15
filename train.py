@@ -12,7 +12,12 @@ import argparse
 def kof_rainbow_env_creator(env_config: EnvContext):
     frame_skip = env_config.get("frame_skip", 1)
     base_env_cls = env_config["base_env_cls"]
-    return KOFActionRepeatEnv(base_env_cls, frame_skip=frame_skip)
+    base_env_kwargs = env_config.get("base_env_kwargs", {})
+
+    def factory():
+        return base_env_cls(**base_env_kwargs)
+
+    return KOFActionRepeatEnv(factory, frame_skip=frame_skip)
 
 register_env("KOF-RDQN-v0", kof_rainbow_env_creator)
 
@@ -23,8 +28,13 @@ def get_rainbow_rdqn_config():
         "env_config": {
             "base_env_cls": KOFEnv,
             "frame_skip": 1,
+            "base_env_kwargs": {
+                "game_exe_path": None,
+                "launch_game": False,
+                "auto_start": True,
+            },
         },
-        "num_workers": 0,
+        "num_workers": 1,
         "num_gpus": 0,
         "framework": "torch",
         "batch_mode": "complete_episodes",
