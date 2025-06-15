@@ -88,20 +88,24 @@ VK = {
 }
 
 # Action map
+# `color` values from colorama are convenient for pretty terminal output but
+# they are not valid Matplotlib colors.  To allow both colourful printing and
+# optional plotting, each action stores a `term_color` for console messages and
+# an `plot_color` using a regular Matplotlib colour name.
 action_map = {
-    0:{'keys':[],'name':'Nothing','color':Fore.WHITE},
-    1:{'keys':['left'],'name':'Move Left','color':Fore.CYAN},
-    2:{'keys':['right'],'name':'Move Right','color':Fore.CYAN},
-    3:{'keys':['up'],'name':'Jump','color':Fore.MAGENTA},
-    4:{'keys':['down'],'name':'Crouch','color':Fore.MAGENTA},
-    5:{'keys':['7'],'name':'Light Punch','color':Fore.BLUE},
-    6:{'keys':['8'],'name':'Strong Punch','color':Fore.LIGHTRED_EX},
-    7:{'keys':['9'],'name':'Light Kick','color':Fore.GREEN},
-    8:{'keys':['0'],'name':'Strong Kick','color':Fore.RED},
-    9:{'keys':['u'],'name':'Strong Punch + Strong Kick','color':Fore.CYAN},
-    10:{'keys':['p'],'name':'Light Punch + Light Kick','color':Fore.MAGENTA},
-    11:{'keys':['o'],'name':'Light Punch + Strong Punch','color':Fore.BLUE},
-    12:{'keys':['i'],'name':'Light Kick + Strong Kick','color':Fore.LIGHTGREEN_EX},
+    0:{'keys':[],      'name':'Nothing',                    'term_color':Fore.WHITE,       'plot_color':'white'},
+    1:{'keys':['left'],'name':'Move Left',                  'term_color':Fore.CYAN,        'plot_color':'cyan'},
+    2:{'keys':['right'],'name':'Move Right',                'term_color':Fore.CYAN,        'plot_color':'cyan'},
+    3:{'keys':['up'],  'name':'Jump',                      'term_color':Fore.MAGENTA,     'plot_color':'magenta'},
+    4:{'keys':['down'],'name':'Crouch',                    'term_color':Fore.MAGENTA,     'plot_color':'magenta'},
+    5:{'keys':['7'],   'name':'Light Punch',               'term_color':Fore.BLUE,        'plot_color':'blue'},
+    6:{'keys':['8'],   'name':'Strong Punch',              'term_color':Fore.LIGHTRED_EX, 'plot_color':'red'},
+    7:{'keys':['9'],   'name':'Light Kick',                'term_color':Fore.GREEN,       'plot_color':'green'},
+    8:{'keys':['0'],   'name':'Strong Kick',               'term_color':Fore.RED,         'plot_color':'darkred'},
+    9:{'keys':['u'],   'name':'Strong Punch + Strong Kick','term_color':Fore.CYAN,        'plot_color':'cyan'},
+    10:{'keys':['p'],  'name':'Light Punch + Light Kick',  'term_color':Fore.MAGENTA,     'plot_color':'magenta'},
+    11:{'keys':['o'],  'name':'Light Punch + Strong Punch','term_color':Fore.BLUE,        'plot_color':'blue'},
+    12:{'keys':['i'],  'name':'Light Kick + Strong Kick',  'term_color':Fore.LIGHTGREEN_EX,'plot_color':'green'},
 }
 
 # Defeat threshold: HP > threshold means defeated
@@ -750,7 +754,9 @@ class KOFEnv(Env):
             f"HP P1:{p1:.0f} P2:{p2:.0f} | "
             f"Return: {self.current_return:.2f}"
         )
-        print(m['color'] + status + Style.RESET_ALL, end='\r', flush=True)
+        # `term_color` prints nicely while avoiding issues when colours are used
+        # in other contexts such as Matplotlib plotting.
+        print(m['term_color'] + status + Style.RESET_ALL, end='\r', flush=True)
 
         done = False
         if self._log_fh:

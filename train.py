@@ -37,7 +37,6 @@ def get_rainbow_rdqn_config():
             "v_min": -10.0,
             "v_max": 10.0,
         },
-        "buffer_size": 500_000,
         "n_step": 3,
         "replay_sequence_length": 20,
         "burn_in": 5,
@@ -49,10 +48,15 @@ def get_rainbow_rdqn_config():
         "lr": 1e-4,
         "gamma": 0.99,
         "double_q": True,
-        "prioritized_replay": True,
-        "prioritized_replay_alpha": 0.6,
-        "prioritized_replay_beta": 0.4,
-        "prioritized_replay_eps": 1e-6,
+        # Replay buffer configuration switched to the new API in RLlib 2.x.
+        # Explicitly select the prioritized buffer type and associated params.
+        "replay_buffer_config": {
+            "type": "PrioritizedReplayBuffer",
+            "capacity": 500_000,
+            "prioritized_replay_alpha": 0.6,
+            "prioritized_replay_beta": 0.4,
+            "prioritized_replay_eps": 1e-6,
+        },
     }
 
 
