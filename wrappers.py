@@ -10,10 +10,10 @@ class KOFActionRepeatEnv(Env):
     by “repeating” each chosen button press for exactly `frame_skip` internal ticks of KOFEnv.
     Also collapses the 5‐tuple (obs, rew, done, truncated, info) into (obs, rew, done, info).
     """
-    def __init__(self, base_env_cls, frame_skip: int = 1):
+    def __init__(self, base_env_factory, frame_skip: int = 1):
         """
         Args:
-            base_env_cls: a zero-argument callable that returns your original KOFEnv()
+            base_env_factory: callable that returns a configured ``KOFEnv`` instance
             frame_skip: how many emulator ticks to hold each button before asking agent again
         """
         super().__init__()
@@ -23,7 +23,7 @@ class KOFActionRepeatEnv(Env):
 
         log("Creating base environment")
         # Instantiate the underlying KOFEnv
-        self.orig_env: KOFEnv = base_env_cls()
+        self.orig_env: KOFEnv = base_env_factory()
         log("Base environment created")
 
         # Ensure original action_space is MultiDiscrete([n_buttons, max_hold])

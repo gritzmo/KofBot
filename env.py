@@ -9,6 +9,7 @@ import pydirectinput
 from collections import deque
 import torch
 import os
+import subprocess
 from ReadWriteMemory import ReadWriteMemory
 from colorama import init, Fore, Style
 import json
@@ -193,9 +194,12 @@ class KOFEnv(Env):
     metadata = {'render.modes': []}
 
     def __init__(self,
-                 process_name="KingOfFighters2002UM_x64.exe",
-                 window_title="King of Fighters 2002 Unlimited Match",
-                 record_path: str | None = None):
+                 process_name: str = "KingOfFighters2002UM_x64.exe",
+                 window_title: str = "King of Fighters 2002 Unlimited Match",
+                 record_path: str | None = None,
+                 game_exe_path: str | None = None,
+                 launch_game: bool = False,
+                 auto_start: bool = True):
         super().__init__()
 
         def log(msg: str) -> None:
@@ -211,6 +215,17 @@ class KOFEnv(Env):
             os.makedirs(os.path.dirname(self.record_path) or '.', exist_ok=True)
             self._log_fh = open(self.record_path, 'a', buffering=1)
             log(f"Logging enabled: {self.record_path}")
+
+        self.auto_start = auto_start
+        self.game_proc = None
+
+        if launch_game and game_exe_path:
+            log(f"Launching game at {game_exe_path}")
+            cwd = os.path.dirname(game_exe_path)
+            self.game_proc = subprocess.Popen([game_exe_path], cwd=cwd)
+            process_name = os.path.basename(game_exe_path)
+            # Give the process a moment to start
+            time.sleep(2)
 
         # at top of __init__
         self.in_transition = False
@@ -232,12 +247,22 @@ class KOFEnv(Env):
         self.zerolimit = 0
         log(f"Searching for process '{process_name}'")
         self.rwm = ReadWriteMemory()
-        self.process = self.rwm.get_process_by_name(process_name)
+        self.process = None
+        if self.game_proc is not None:
+            try:
+                self.process = self.rwm.get_process_by_id(self.game_proc.pid)
+            except AttributeError:
+                self.process = None
+
+        if not self.process:
+            self.process = self.rwm.get_process_by_name(process_name)
+
         if not self.process:
             raise Exception(f"Process '{process_name}' not found.")
         log("Opening process handle")
         self.process.open()
         self.handle = self.process.handle
+
         log(f"Looking for window titled '{window_title}'")
         self.hwnd = win32gui.FindWindow(None, window_title)
         if not self.hwnd:
@@ -382,64 +407,49 @@ class KOFEnv(Env):
         # reset counters
         self.action_counts.fill(0)
         self.bar_update_counter = 0
-
-        # handle P1 defeat animation and Enter
-        raw_p1 = self._read(ADDR['p1_hp'])
-        if raw_p1 > DEFEAT_THRESHOLD:
-
-                # handle initial menu pause: both HP zero
-            raw_p1 = self._read(ADDR['p1_guard'])
-            raw_p2 = self._read(ADDR['p2_guard'])
             
-            for dots in range(1,4):
-                print(f"Restarting environment{'.'*dots}", end='\r', flush=True)
-                time.sleep(5)
+        if self.auto_start:
+            # handle P1 defeat animation and basic menu navigation
+            raw_p1 = self._read(ADDR['p1_hp'])
+            if raw_p1 > DEFEAT_THRESHOLD:
                 raw_p1 = self._read(ADDR['p1_guard'])
                 raw_p2 = self._read(ADDR['p2_guard'])
-                if raw_p1 > 0 and raw_p2 > 0:
-                    print(f"Current Guard: P1:{raw_p1:.0f} P2:{raw_p2:.0f}")
-                    print("Pressed Enter.")
-                    press_key('enter', hold=0.2)
-                else:
-                    print("Moving On...")
-                    pass
-
-        
-
-       
-                
-        raw_p1 = self._read(ADDR['p1_guard'])
-        raw_p2 = self._read(ADDR['p2_guard'])
-               
-        
-        if raw_p1 == 0 and raw_p2 == 0:
-            print("P Guards are zero.")
-            # selecting endless mode countdown
-            for sec in range(3,0,-1):
-                print(f"Selecting Endless Mode in {sec} seconds", end='\r', flush=True)
-                time.sleep(1)
-            print()
-            print("Selecting Endless Mode...")
-            press_key('enter', hold=0.2)
-
-            # wait before selecting character
-            for sec in range(3,0,-1):
-                print(f"Waiting {sec} Seconds To Select Character...", end='\r', flush=True)
-                time.sleep(1)
-            print()
-
-            print("Selecting Character: Angel")
-            for _ in range(5):
-                press_key('right', hold=0.1)
-                print(f"Pressed Right {_} times...", end='\r', flush=True)
-                time.sleep(2)
-            for _ in range(4):
-                press_key('down', hold=0.1)
-                print(f"Pressed Down {_} times...", end='\r', flush=True)
-                time.sleep(2)
-            press_key('enter', hold=0.1)
-            print("CHARACTER SELECTED!")
-            
+                for dots in range(1,4):
+                    print(f"Restarting environment{'.'*dots}", end='\r', flush=True)
+                    time.sleep(5)
+                    raw_p1 = self._read(ADDR['p1_guard'])
+                    raw_p2 = self._read(ADDR['p2_guard'])
+                    if raw_p1 > 0 and raw_p2 > 0:
+                        print(f"Current Guard: P1:{raw_p1:.0f} P2:{raw_p2:.0f}")
+                        print("Pressed Enter.")
+                        press_key('enter', hold=0.2)
+                    else:
+                        print("Moving On...")
+            raw_p1 = self._read(ADDR['p1_guard'])
+            raw_p2 = self._read(ADDR['p2_guard'])
+            if raw_p1 == 0 and raw_p2 == 0:
+                print("P Guards are zero.")
+                for sec in range(3,0,-1):
+                    print(f"Selecting Endless Mode in {sec} seconds", end='\r', flush=True)
+                    time.sleep(1)
+                print()
+                print("Selecting Endless Mode...")
+                press_key('enter', hold=0.2)
+                for sec in range(3,0,-1):
+                    print(f"Waiting {sec} Seconds To Select Character...", end='\r', flush=True)
+                    time.sleep(1)
+                print()
+                print("Selecting Character: Angel")
+                for _ in range(5):
+                    press_key('right', hold=0.1)
+                    print(f"Pressed Right {_} times...", end='\r', flush=True)
+                    time.sleep(2)
+                for _ in range(4):
+                    press_key('down', hold=0.1)
+                    print(f"Pressed Down {_} times...", end='\r', flush=True)
+                    time.sleep(2)
+                press_key('enter', hold=0.1)
+                print("CHARACTER SELECTED!")
 
         
 
@@ -778,6 +788,11 @@ class KOFEnv(Env):
 
     def close(self):
         self.close_log()
+        if self.game_proc is not None:
+            try:
+                self.game_proc.terminate()
+            except Exception:
+                pass
 
 
 
