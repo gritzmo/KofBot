@@ -51,7 +51,7 @@ def get_rainbow_rdqn_config():
                 "window_index": 0,
             },
         },
-        "num_workers": 2,
+        "num_workers": 1,
         "num_gpus": 0,
         "framework": "torch",
         "batch_mode": "complete_episodes",
@@ -180,9 +180,7 @@ if __name__ == "__main__":
             print(f"[Iter {i:4d}] no full episode this iter; env_steps={total_ts:,}")
         else:
             print(f"[Iter {i:4d}] reward_mean={mean_reward:.2f}  env_steps={total_ts:,}")
-        if (mean_reward is not None and mean_reward >= args.stop_reward) or total_ts >= args.stop_timesteps:
-            print("Stopping!")
-            break
+        
 
     checkpoint_path = trainer.save("./kof_rainbow_rdqn_checkpoints")
     print(f"Checkpoint saved at: {checkpoint_path}")

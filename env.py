@@ -9,6 +9,7 @@ import pydirectinput
 from collections import deque
 import torch
 import os
+from types import SimpleNamespace
 import subprocess
 import win32gui
 import win32process
@@ -25,8 +26,8 @@ TF_ENABLE_ONEDNN_OPTS = 0  # Disable oneDNN optimizations for reproducibility
 torch.set_num_threads( min(8, os.cpu_count()) )
 
 # --- Constants for penalizing idle/repeat behavior ≪ADDED≫ ---
-LOC_THRESHOLD    = 500    # steps staying in place before penalty
-LOC_PENALTY      = 0.1  # reward subtracted when idle too long
+LOC_THRESHOLD    = 100    # steps staying in place before penalty
+LOC_PENALTY      = 0.25  # reward subtracted when idle too long
 REPEAT_THRESHOLD = 4 # repeated same action before penalty
 REPEAT_PENALTY   = 50   # reward subtracted when action repeated too much
 
@@ -41,8 +42,8 @@ GUARD_CRUSH_THRESHOLD = 10
 GUARD_CRUSH_BONUS     = 2.0
 
 # Reward scales for high-damage combos
-COMBO_HIT_BONUS    = 0.5   # bonus per hit beyond the first when a combo ends
-COMBO_DAMAGE_SCALE = 0.05  # multiplier for total damage dealt during a combo
+COMBO_HIT_BONUS    = 0.25  # bonus per hit beyond the first when a combo ends
+COMBO_DAMAGE_SCALE = 0.50  # multiplier for total damage dealt during a combo
 
 # Memory input blasting
 INPUT_OFFSET = 0x8CAEC8  # offset for player input memory
@@ -115,6 +116,18 @@ VK = {
 
 
 # Mapping from action index to memory input value
+
+attack_btn_indices = [
+    128, 129, 130, 132, 136,  # Light punches
+    256, 257, 258, 260, 264,  # Strong punches
+    32, 33, 34, 36, 40,       # Light kicks
+    64, 65, 66, 68, 72,       # Strong kicks
+    320, 321, 322, 324, 328,  # SK+SP and variants
+    384, 385, 386, 388, 392,  # LP+SP and variants
+    96, 97, 98, 100, 104,     # LK+SK and variants
+    160, 161, 162, 164, 168   # LP+LK and variants
+]
+
 INPUT_CODES = {
      0:   0,   1:   4,   2:   8,   3:   2,   4:   6,   5:  10,
      6:   1,   7:   9,   8:   5,   9: 128,  10: 129,  11: 130,
@@ -204,7 +217,7 @@ def early_damage_reward(dmg_dealt: float, step_count: int) -> float:
 
 def step_time_penalty() -> float:
     """Small negative reward each step to encourage faster victories."""
-    return -0.01
+    return -0.05
 
 
 def combo_hits_reward(combo_hits: int) -> float:
@@ -234,7 +247,7 @@ def repeat_action_penalty(current: int, last: int | None,
 def out_of_range_penalty(distance: float, action_idx: int,
                          dmg_dealt: float, striking_range: float) -> float:
     """Penalty for attacking when too far away."""
-    if action_idx in [5, 6, 7, 8] and distance > striking_range and dmg_dealt <= 0:
+    if action_idx in attack_btn_indices and distance > striking_range and dmg_dealt <= 0:
         return -0.25
     return 0.0
 
@@ -247,17 +260,17 @@ def stationary_penalty(count: int) -> float:
 
 
 def retreat_penalty(distance: float, prev_distance: float,
-                    action_idx: int) -> float:
+                    INPUT_CODES: int) -> float:
     """Small penalty each frame the agent moves away from the opponent."""
-    if action_idx in [1, 2] and distance > prev_distance:
-        return -0.01
+    if INPUT_CODES in [4, 8] and distance > prev_distance:
+        return -0.25
     return 0.0
 
 
 def approach_streak_bonus(count: int, threshold: int, bonus: float) -> float:
     """Bonus when moving toward the opponent for several frames."""
     if count >= threshold:
-        return bonus
+        return 0.5
     return 0.0
 
 
@@ -274,11 +287,14 @@ class KOFEnv(Env):
                  record_path: str | None = None,
                  game_exe_path: str | None = None,
                  launch_game: bool = False,
+                 max_episode_steps: int = 3600,
                  auto_start: bool = True):
         super().__init__()
         self.window_index = int(window_index)
         self.process = None
         self._wait_first_enter = True
+        self._max_episode_steps = int(max_episode_steps)
+        self.spec = SimpleNamespace(max_episode_steps=self._max_episode_steps)
         
 
         def log(msg: str) -> None:
@@ -570,12 +586,12 @@ class KOFEnv(Env):
     def step(self, action: int):
         # single-step update
         obs_prev = self._last_obs
+        
         self.nstep += 1
         STRIKING_RANGE = 63
         
 
-        if self.pm.read_uchar(BATTLE_STATE_ADDR) == 129:
-            return self._last_obs, 0.0, False, True, {"waiting": True}
+        
 
         # 1) decode action
         btn_idx = int(action)
@@ -595,13 +611,13 @@ class KOFEnv(Env):
             - hp <   40 → -0.10 per step
             """
             if hp >= 120:
-                return 0.25
+                return 1
             elif hp >= 80:
-                return 0.05
+                return 0.25
             elif hp >= 40:
                 return 0.0
             else:
-                return -0.10
+                return -0.1
             
         # 2) preserve old combo_len, super, and combo_dmg for deltas
         prev_hits    = self.prev.get('combo_len', 0) or 0
@@ -621,7 +637,7 @@ class KOFEnv(Env):
         distance  = abs(p1_x - p2_x)
         dmg_dealt = max(0, min(self.prev['p2'] - p2, 120))
         dmg_taken = max(0, min(self.prev['p1'] - p1, 120))
-        reward    = 2.0 * dmg_dealt - 0.5 * dmg_taken
+        reward    = 3.0 * dmg_dealt - 0.5 * dmg_taken
 
         # Extra bonus for early damage and step penalty to promote quick fights
         reward += early_damage_reward(dmg_dealt, self.nstep)
@@ -636,8 +652,8 @@ class KOFEnv(Env):
             print(f"\U0001f501 Repeat penalty {rep_pen}")
 
         # 5) range bonuses / penalties
-        if btn_idx in [5,6,7,8] and distance <= STRIKING_RANGE and dmg_dealt > 0:
-            reward += 1
+        if btn_idx in attack_btn_indices and distance <= STRIKING_RANGE and dmg_dealt > 0:
+            reward += 5
             print("✅ Hit in range +50")
         out_pen = out_of_range_penalty(distance, btn_idx, dmg_dealt, STRIKING_RANGE)
         if out_pen:
@@ -668,9 +684,9 @@ class KOFEnv(Env):
         if my_super > prev_super:
             reward += 1; print("⚡ Super fill +1")
         if p1_action == 12320806:
-            reward += 5; print("🌀 Super move landed +5")
+            reward += 0.1; print("🌀 Super move landed +5")
         if p1_action == 12648486:
-            reward += 10; print("💥 Mega move landed +10")
+            reward += 0.5; print("💥 Mega move landed +10")
 
         # 9) closing / retreat shaping
         prev_dist = (
@@ -678,8 +694,8 @@ class KOFEnv(Env):
             if self.prev['p1_location'] is not None
             else distance
         )
-        if btn_idx in [1, 2] and distance < prev_dist:
-            reward += 0.05
+        if INPUT_CODES in [4, 8] and distance < prev_dist:
+            reward += 10
             print("⬆️ Closing in +0.05")
         ret_pen = retreat_penalty(distance, prev_dist, btn_idx)
         if ret_pen:
@@ -689,7 +705,7 @@ class KOFEnv(Env):
         # --- New aggressive incentives ---
         #  a) Staying within CLOSE_RANGE_DIST for consecutive frames
         if distance < CLOSE_RANGE_DIST:
-            self.close_range_count += 1
+            self.close_range_count += 2
             if self.close_range_count >= CLOSE_RANGE_FRAMES:
                 reward += CLOSE_RANGE_BONUS
                 print(f"🔴 Close-range streak +{CLOSE_RANGE_BONUS} (count={self.close_range_count})")
@@ -705,8 +721,9 @@ class KOFEnv(Env):
 
           # 10) “move‐toward‐opponent” streak bonus & same‐location penalty (new)
         if p2_x is not None and p1_x is not None:
-            if (p2_x > p1_x and btn_idx == 2) or (p2_x < p1_x and btn_idx == 1):
+            if (p2_x > p1_x and INPUT_CODES == 4) or (p2_x < p1_x and INPUT_CODES == 8):
                 self.approach_count += 1
+
             else:
                 self.approach_count = 0
         else:
@@ -736,12 +753,13 @@ class KOFEnv(Env):
         p1_hp = self._read(ADDR['p1_hp'])
         p2_hp = self._read(ADDR['p2_hp'])
         if p1_hp > DEFEAT_THRESHOLD and p2_hp <= DEFEAT_THRESHOLD:
-            reward -= 10 * self.lose_streak; print(f"❌ P1 defeated −{reward}")
+            reward -= 100 * self.lose_streak; print(f"❌ P1 defeated −{reward}")
             self.round = 0
             self.lose_streak += 1
+            if self.pm.read_uchar(BATTLE_STATE_ADDR) == 129:
+                return self._last_obs, 0.0, False, True, {"waiting": True}
+           
 
-            obs, _ = self.reset()
-            done = True
             if self._log_fh:
                 self._log_fh.write(json.dumps({
                     "obs": None if obs_prev is None else obs_prev.tolist(),
@@ -753,28 +771,21 @@ class KOFEnv(Env):
             self._last_obs = obs
             self.mem_input.set_input(0)
             return obs, reward, True, False, {}
+        
         if p2_hp > DEFEAT_THRESHOLD and p1_hp <= DEFEAT_THRESHOLD:
             self.round += 1
             self.lose_streak = 0
             if self.lose_streak == 0:
-                reward += 25
+                reward += 500
                 print(f"🎉 Redemption Bonus! + {reward}")
                 print()
-            reward += 100 * self.round; print(f"🏆 P2 defeated + {reward}")
-            time.sleep(11)
+            reward += 2000 * self.round; print(f"🏆 P2 defeated + {reward}")
+            if self.pm.read_uchar(BATTLE_STATE_ADDR) == 129:
+                return self._last_obs, 0.0, False, True, {"waiting": True}
+                
 
-            if self._log_fh:
-                self._log_fh.write(json.dumps({
-                    "obs": None if obs_prev is None else obs_prev.tolist(),
-                    "action": action.tolist() if hasattr(action, "tolist") else action,
-                    "reward": reward,
-                    "next_obs": obs_next.tolist(),
-                    "done": done
-                }) + "\n")
-            self._last_obs = obs_next
-            self.mem_input.set_input(0)
-            return obs_next, reward, True, False, {}
-
+          
+            
         # ── NOW update combo_dmg in prev: ──
         if hit_ct > 0:
             prev_combo_dmg += dmg_dealt
