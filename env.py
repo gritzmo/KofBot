@@ -42,7 +42,7 @@ GUARD_CRUSH_THRESHOLD = 10
 GUARD_CRUSH_BONUS     = 2.0
 
 # Reward scales for high-damage combos
-COMBO_HIT_BONUS    = 0.25  # bonus per hit beyond the first when a combo ends
+COMBO_HIT_BONUS    =  1 # bonus per hit beyond the first when a combo ends
 COMBO_DAMAGE_SCALE = 0.50  # multiplier for total damage dealt during a combo
 
 # Memory input blasting
@@ -637,7 +637,7 @@ class KOFEnv(Env):
         distance  = abs(p1_x - p2_x)
         dmg_dealt = max(0, min(self.prev['p2'] - p2, 120))
         dmg_taken = max(0, min(self.prev['p1'] - p1, 120))
-        reward    = 3.0 * dmg_dealt - 0.5 * dmg_taken
+        reward    = (5.0 * dmg_dealt) - (0.5 * dmg_taken)
 
         # Extra bonus for early damage and step penalty to promote quick fights
         reward += early_damage_reward(dmg_dealt, self.nstep)
@@ -653,7 +653,7 @@ class KOFEnv(Env):
 
         # 5) range bonuses / penalties
         if btn_idx in attack_btn_indices and distance <= STRIKING_RANGE and dmg_dealt > 0:
-            reward += 5
+            reward += 50
             print("✅ Hit in range +50")
         out_pen = out_of_range_penalty(distance, btn_idx, dmg_dealt, STRIKING_RANGE)
         if out_pen:
@@ -682,11 +682,11 @@ class KOFEnv(Env):
 
         # 8) super meter shaping
         if my_super > prev_super:
-            reward += 1; print("⚡ Super fill +1")
+            reward += 5; print("⚡ Super fill +5")
         if p1_action == 12320806:
-            reward += 0.1; print("🌀 Super move landed +5")
+            reward += 1; print("🌀 Super move landed +1")
         if p1_action == 12648486:
-            reward += 0.5; print("💥 Mega move landed +10")
+            reward += 2.5; print("💥 Mega move landed +2.5")
 
         # 9) closing / retreat shaping
         prev_dist = (
@@ -757,7 +757,7 @@ class KOFEnv(Env):
             self.round = 0
             self.lose_streak += 1
             if self.pm.read_uchar(BATTLE_STATE_ADDR) == 129:
-                return self._last_obs, 0.0, False, True, {"waiting": True}
+                return self._last_obs, reward, False, True, {"waiting": True}
            
 
             if self._log_fh:
@@ -776,12 +776,12 @@ class KOFEnv(Env):
             self.round += 1
             self.lose_streak = 0
             if self.lose_streak == 0:
-                reward += 500
+                reward += 100
                 print(f"🎉 Redemption Bonus! + {reward}")
                 print()
-            reward += 2000 * self.round; print(f"🏆 P2 defeated + {reward}")
+            reward += 1000 * self.round; print(f"🏆 P2 defeated + {reward}")
             if self.pm.read_uchar(BATTLE_STATE_ADDR) == 129:
-                return self._last_obs, 0.0, False, True, {"waiting": True}
+                return self._last_obs, reward, False, True, {"waiting": True}
                 
 
           
