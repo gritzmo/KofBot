@@ -1,6 +1,6 @@
 # KOFBot
 
-This repository contains utilities for training a Rainbow RDQN agent for *The King of Fighters 2002 UM* using [RLlib](https://docs.ray.io/en/latest/rllib.html).
+This repository contains utilities for training an R2D2 agent for *The King of Fighters 2002 UM* using [RLlib](https://docs.ray.io/en/latest/rllib.html).
 
 ## Recording gameplay
 
@@ -30,4 +30,7 @@ If `--mode` is not given, `train.py` prompts you to pick a mode. When
 selecting offline mode you can specify a dataset path or leave it blank. If you
 leave it blank, a `dataset/` folder will be created next to `train.py` and used
 as the dataset location.
+
+The default configuration uses RLlib's R2D2 algorithm with an LSTM model so the
+agent can learn from sequences of actions and better exploit opponent patterns.
 

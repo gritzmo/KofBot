@@ -6,7 +6,7 @@ from wrappers import KOFActionRepeatEnv
 from ray.rllib.env.env_context import EnvContext
 from ray.tune.registry import register_env
 import ray
-from ray.rllib.algorithms.dqn import DQN
+from ray.rllib.algorithms.r2d2 import R2D2
 import argparse
 
 def kof_rainbow_env_creator(env_config: EnvContext):
@@ -38,7 +38,7 @@ def kof_rainbow_env_creator(env_config: EnvContext):
 register_env("KOF-RDQN-v0", kof_rainbow_env_creator)
 
 
-def get_rainbow_rdqn_config():
+def get_r2d2_config():
     return {
         "env": "KOF-RDQN-v0",
         "env_config": {
@@ -54,16 +54,11 @@ def get_rainbow_rdqn_config():
         "num_workers": 1,
         "num_gpus": 0,
         "framework": "torch",
-        "batch_mode": "complete_episodes",
+        "batch_mode": "truncate_episodes",
         "model": {
-            "use_lstm": False,
+            "use_lstm": True,
             "lstm_cell_size": 256,
-             # Provide a sequence length so RLlib can create dummy batches with
-            # ``seq_lens`` when initializing the RNN. Without this, the policy
-            # fails an assertion in ``recurrent_net.forward``.
             "max_seq_len": 20,
-           
-            
         },
         # Rollout fragments are truncated to this length so that a valid
         # ``seq_lens`` tensor is available when the model processes the batch.
@@ -75,6 +70,7 @@ def get_rainbow_rdqn_config():
         "v_max": 10.0,
         "n_step": 3,
         "burn_in": 5,
+        "zero_init_states": True,
         "exploration_config": {},
         "num_steps_sampled_before_learning_starts": 100_000,
         "train_batch_size": 64,
@@ -94,7 +90,7 @@ def get_rainbow_rdqn_config():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Train KOF2002-UM with Rainbow RDQN (LSTM)."
+        description="Train KOF2002-UM with R2D2 (LSTM)."
     )
     parser.add_argument("--stop-iters", type=int, default=30_000)
     parser.add_argument("--stop-timesteps", type=int, default=3_000_000)
@@ -122,7 +118,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     ray.init(ignore_reinit_error=True)
-    config = get_rainbow_rdqn_config()
+    config = get_r2d2_config()
     config["env_config"]["base_env_kwargs"]["window_index"] = args.window_index
 
     parser.add_argument(
@@ -134,7 +130,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     ray.init(ignore_reinit_error=True)
-    config = get_rainbow_rdqn_config()
+    config = get_r2d2_config()
 
     # Determine training mode.
     mode = args.mode
@@ -167,7 +163,7 @@ if __name__ == "__main__":
             print("Warning: --offline-dataset specified but mode is online; ignoring dataset path.")
         config["input"] = "sampler"
 
-    trainer = DQN(config=config)
+    trainer = R2D2(config=config)
 
     for i in range(args.stop_iters):
         result = trainer.train()
@@ -182,7 +178,7 @@ if __name__ == "__main__":
             print(f"[Iter {i:4d}] reward_mean={mean_reward:.2f}  env_steps={total_ts:,}")
         
 
-    checkpoint_path = trainer.save("./kof_rainbow_rdqn_checkpoints")
+    checkpoint_path = trainer.save("./kof_r2d2_checkpoints")
     print(f"Checkpoint saved at: {checkpoint_path}")
 
     ray.shutdown()
