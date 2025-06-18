@@ -126,20 +126,57 @@ action_map = {
 
 # Mapping from action index to memory input value
 input_codes = {
-    0: 0,
-    1: 4,     # left
-    2: 8,     # right
-    3: 1,     # up
-    4: 2,     # down
-    5: 128,   # light punch
-    6: 256,   # strong punch
-    7: 32,    # light kick
-    8: 64,    # strong kick
-    9: 320,   # strong punch + strong kick
-    10: 160,  # light punch + light kick
-    11: 384,  # light punch + strong punch
-    12: 96,   # light kick + strong kick
+     0:   0,      # none
+     1:   4,      # left
+     2:   8,      # right
+     3:   2,      # down
+     4:   6,      # downleft
+     5:  10,      # downright
+     6:   1,      # up
+     7:   9,      # up_right
+     8:   5,      # up_left
+     9: 128,      # lp
+    10: 129,      # uplp
+    11: 130,      # downlp
+    12: 132,      # leftlp
+    13: 136,      # rightlp
+    14: 256,      # sp
+    15: 257,      # upsp
+    16: 260,      # leftsp
+    17: 258,      # downsp
+    18: 264,      # rightsp
+    19:  32,      # lk
+    20:  33,      # uplk
+    21:  34,      # downlk
+    22:  36,      # leftlk
+    23:  40,      # rightlk
+    24:  64,      # sk
+    25:  66,      # downsk
+    26:  65,      # upsk
+    27:  68,      # leftsk
+    28:  72,      # rightsk
+    29: 320,      # sk+sp
+    30: 324,      # left+sk+sp
+    31: 328,      # rightsksp
+    32: 321,      # upsksp
+    33: 322,      # downsksp
+    34: 392,      # rightlpsp
+    35: 388,      # leftlpsp
+    36: 385,      # uplpsp
+    37: 386,      # downlpsp
+    38: 384,      # lp+sp
+    39:  96,      # lk+sk
+    40:  97,      # uplksk
+    41:  98,      # downlksk
+    42: 100,      # left+lk+sk
+    43: 104,      # rightlksk
+    44: 160,      # lp+lk
+    45: 164,      # leftlplk
+    46: 168,      # rightlplk
+    47: 161,      # uplplk
+    48: 162,      # downlplk
 }
+
 
 # Defeat threshold: HP > threshold means defeated
 DEFEAT_THRESHOLD = 200
@@ -525,49 +562,7 @@ class KOFEnv(Env):
         self.action_counts.fill(0)
         self.bar_update_counter = 0
             
-        if self.auto_start:
-            # handle P1 defeat animation and basic menu navigation
-            raw_p1 = self._read(ADDR['p1_hp'])
-            if raw_p1 > DEFEAT_THRESHOLD:
-                raw_p1 = self._read(ADDR['p1_guard'])
-                raw_p2 = self._read(ADDR['p2_guard'])
-                for dots in range(1,4):
-                    print(f"Restarting environment{'.'*dots}", end='\r', flush=True)
-                    time.sleep(5)
-                    raw_p1 = self._read(ADDR['p1_guard'])
-                    raw_p2 = self._read(ADDR['p2_guard'])
-                    if raw_p1 > 0 and raw_p2 > 0:
-                        print(f"Current Guard: P1:{raw_p1:.0f} P2:{raw_p2:.0f}")
-                        print("Pressed Enter.")
-                        press_key(self.hwnd, 'enter', hold=0.2)
-                    else:
-                        print("Moving On...")
-            raw_p1 = self._read(ADDR['p1_guard'])
-            raw_p2 = self._read(ADDR['p2_guard'])
-            if raw_p1 == 0 and raw_p2 == 0:
-                print("P Guards are zero.")
-                for sec in range(3,0,-1):
-                    print(f"Selecting Endless Mode in {sec} seconds", end='\r', flush=True)
-                    time.sleep(1)
-                print()
-                print("Selecting Endless Mode...")
-                press_key(self.hwnd, 'enter', hold=0.2)
-                for sec in range(3,0,-1):
-                    print(f"Waiting {sec} Seconds To Select Character...", end='\r', flush=True)
-                    time.sleep(1)
-                print()
-                print("Selecting Character: Angel")
-                for _ in range(5):
-                    press_key(self.hwnd, 'right', hold=0.1)
-                    print(f"Pressed Right {_} times...", end='\r', flush=True)
-                    time.sleep(2)
-                for _ in range(4):
-                    press_key(self.hwnd, 'down', hold=0.1)
-                    print(f"Pressed Down {_} times...", end='\r', flush=True)
-                    time.sleep(2)
-                press_key(self.hwnd, 'enter', hold=0.1)
-                print("CHARACTER SELECTED!")
-
+        
         time.sleep(1)
         
 

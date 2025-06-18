@@ -51,7 +51,7 @@ def get_rainbow_rdqn_config():
                 "window_index": 0,
             },
         },
-        "num_workers": 2,
+        "num_workers": 1,
         "num_gpus": 0,
         "framework": "torch",
         "batch_mode": "complete_episodes",
