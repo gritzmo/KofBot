@@ -567,8 +567,6 @@ class KOFEnv(Env):
         obs_prev = self._last_obs
         self.nstep += 1
         STRIKING_RANGE = 63
-        safe_focus(self.hwnd)
-
 
         if isinstance(action, (list, tuple, np.ndarray)):
             btn_idx = int(action[0])
