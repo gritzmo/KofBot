@@ -644,7 +644,7 @@ class KOFEnv(Env):
         distance  = abs(p1_x - p2_x)
         dmg_dealt = max(0, min(self.prev['p2'] - p2, 120))
         dmg_taken = max(0, min(self.prev['p1'] - p1, 120))
-        reward    = (5.0 * dmg_dealt) - (0.5 * dmg_taken)
+        reward    = (10.0 * dmg_dealt) - (0.5 * dmg_taken)
 
         # Extra bonus for early damage and step penalty to promote quick fights
         reward += early_damage_reward(dmg_dealt, self.nstep)
@@ -765,6 +765,7 @@ class KOFEnv(Env):
             self.round = 0
             self.lose_streak += 1
             self.p1_defeated = True
+            
             if self.pm.read_uchar(BATTLE_STATE_ADDR) == 129:
                 return self._last_obs, reward, False, True, {"waiting": True}
 

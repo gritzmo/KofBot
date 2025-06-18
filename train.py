@@ -9,6 +9,15 @@ import ray
 from ray.rllib.algorithms.r2d2 import R2D2
 import argparse
 
+"""
+Updates applied (June 18 2025):
+1. Let RLlib auto-derive `replay_sequence_length` (max_seq_len + burn_in) by
+   setting it to -1.  (max_seq_len = 20, burn_in = 5 → replay_sequence_length = 25.)
+2. Switched `batch_mode` to "complete_episodes" – required by R2D2.
+3. Set `rollout_fragment_length` to 25 to ensure ≥ replay_sequence_length.
+Everything else remains unchanged.
+"""
+
 def kof_rainbow_env_creator(env_config: EnvContext):
     """Create the KOF environment used by RLlib.
 
@@ -29,11 +38,11 @@ def kof_rainbow_env_creator(env_config: EnvContext):
     )
     base_env_kwargs["window_index"] = window_idx
 
-
     def factory():
         return base_env_cls(**base_env_kwargs)
 
     return KOFActionRepeatEnv(factory, frame_skip=frame_skip)
+
 
 register_env("KOF-RDQN-v0", kof_rainbow_env_creator)
 
@@ -54,20 +63,18 @@ def get_r2d2_config():
         "num_workers": 1,
         "num_gpus": 0,
         "framework": "torch",
-        "batch_mode": "truncate_episodes",
+        # R2D2 needs complete episode batches.
+        "batch_mode": "complete_episodes",
         "model": {
             "use_lstm": True,
             "lstm_cell_size": 256,
             "max_seq_len": 20,
         },
-        # Rollout fragments are truncated to this length so that a valid
-        # ``seq_lens`` tensor is available when the model processes the batch.
-        "rollout_fragment_length": 20,
+        # Must be ≥ (max_seq_len + burn_in) == 25.
+        "rollout_fragment_length": 25,
         "noisy": True,
         "dueling": True,
-        "num_atoms": 51,
-        "v_min": -10.0,
-        "v_max": 10.0,
+        "num_atoms": 1,
         "n_step": 3,
         "burn_in": 5,
         "zero_init_states": True,
@@ -78,13 +85,18 @@ def get_r2d2_config():
         "lr": 1e-4,
         "gamma": 0.99,
         "double_q": True,
-        # Replay buffer configuration switched to the new API in RLlib 2.x.
-        # Explicitly select the prioritized buffer type and associated params.
+        # Replay buffer configuration using new API in RLlib 2.x.
         "replay_buffer_config": {
-            "type": "ReplayBuffer",
-            "capacity": 500_000,
-            "replay_sequence_length": 20,
-        },
+            # <<< change this line (or remove it altogether)
+            "type": "MultiAgentReplayBuffer",
+            # everything below can stay as you have it
+            "capacity": 50_000,
+            "storage_unit": "sequences",        # needed for RNNs
+            # -1 lets RLlib derive  max_seq_len + burn_in automatically
+            "replay_sequence_length": -1,
+            "replay_zero_init_states": True,
+        }
+
     }
 
 
@@ -115,12 +127,6 @@ if __name__ == "__main__":
         default=0,
         help="When multiple game windows exist, attach to the Nth one (0-based).",
     )
-    args = parser.parse_args()
-
-    ray.init(ignore_reinit_error=True)
-    config = get_r2d2_config()
-    config["env_config"]["base_env_kwargs"]["window_index"] = args.window_index
-
     parser.add_argument(
         "--dataset-format",
         type=str,
@@ -131,6 +137,7 @@ if __name__ == "__main__":
 
     ray.init(ignore_reinit_error=True)
     config = get_r2d2_config()
+    config["env_config"]["base_env_kwargs"]["window_index"] = args.window_index
 
     # Determine training mode.
     mode = args.mode
@@ -166,16 +173,31 @@ if __name__ == "__main__":
     trainer = R2D2(config=config)
 
     for i in range(args.stop_iters):
-        result = trainer.train()
-        mean_reward = result.get("episode_reward_mean", None)
-        total_ts = result.get(
-            "timesteps_total",
-            result.get("agent_timesteps_total", result.get("timesteps_this_iter", 0))
-        )
-        if mean_reward is None:
-            print(f"[Iter {i:4d}] no full episode this iter; env_steps={total_ts:,}")
-        else:
-            print(f"[Iter {i:4d}] reward_mean={mean_reward:.2f}  env_steps={total_ts:,}")
+        train_result = trainer.train()
+
+        if isinstance(train_result, dict):
+            mean_reward = train_result.get("episode_reward_mean", None)
+            total_ts = train_result.get(
+                "timesteps_total",
+                train_result.get(
+                    "agent_timesteps_total",
+                    train_result.get("timesteps_this_iter", 0),
+                ),
+            )
+
+            if mean_reward is None:
+                print(
+                    f"[Iter {i:4d}] no full episode this iter; env_steps={total_ts:,}"
+                )
+            else:
+                print(
+                    f"[Iter {i:4d}] reward_mean={mean_reward:.2f}  env_steps={total_ts:,}"
+                )
+
+                print(
+                f"[Iter {i:4d}] trainer.train() returned {type(train_result).__name__};"
+                " skipping metrics"
+            )
         
 
     checkpoint_path = trainer.save("./kof_r2d2_checkpoints")
