@@ -5,9 +5,15 @@ from env import KOFEnv, action_map
 
 class KOFActionRepeatEnv(Env):
     """
-    Wraps your original KOFEnv (MultiDiscrete space) into a Discrete(n_buttons) environment
-    by “repeating” each chosen button press for exactly `frame_skip` internal ticks of KOFEnv.
-    Also collapses the 5‐tuple (obs, rew, done, truncated, info) into (obs, rew, done, info).
+    Wraps your original :class:`KOFEnv` environment into a simpler
+    ``Discrete(n_buttons)`` interface. If the base environment exposes a
+    ``MultiDiscrete`` action space, the first element is treated as the button
+    index and the second as a hold time. Otherwise a plain ``Discrete`` space is
+    expected. Each chosen action is repeated for ``frame_skip`` steps.
+
+    The wrapper also collapses the 5‑tuple ``(obs, reward, terminated,
+    truncated, info)`` into the older ``(obs, reward, done, info)`` format if
+    returned by the underlying environment.
     """
     def __init__(self, base_env_factory, frame_skip: int = 1):
         """
@@ -25,10 +31,15 @@ class KOFActionRepeatEnv(Env):
         self.orig_env: KOFEnv = base_env_factory()
         log("Base environment created")
 
-        # Ensure original action_space is MultiDiscrete([n_buttons, max_hold])
-        assert isinstance(self.orig_env.action_space, MultiDiscrete), \
-            "KOFEnv.action_space must be MultiDiscrete([n_buttons, max_hold])"
-        self.num_buttons = int(self.orig_env.action_space.nvec[0])
+        # Determine the number of available buttons from the underlying env.
+        if isinstance(self.orig_env.action_space, MultiDiscrete):
+            self.num_buttons = int(self.orig_env.action_space.nvec[0])
+        elif isinstance(self.orig_env.action_space, Discrete):
+            self.num_buttons = int(self.orig_env.action_space.n)
+        else:
+            raise TypeError(
+                f"Unsupported action_space: {self.orig_env.action_space}"
+            )
 
         # Expose only Discrete(num_buttons) to the agent
         self.action_space = Discrete(self.num_buttons)
