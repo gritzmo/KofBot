@@ -3,7 +3,7 @@ import numpy as np
 import ctypes
 from ctypes import byref, sizeof
 from gymnasium import Env
-from gymnasium.spaces import Box, MultiDiscrete
+from gymnasium.spaces import Box, Discrete
 import win32gui
 import pydirectinput
 from collections import deque
@@ -18,6 +18,7 @@ import json
 import pywintypes
 import win32con
 import threading
+import pymem
 
 TF_ENABLE_ONEDNN_OPTS = 0  # Disable oneDNN optimizations for reproducibility
 
@@ -44,8 +45,11 @@ COMBO_HIT_BONUS    = 0.5   # bonus per hit beyond the first when a combo ends
 COMBO_DAMAGE_SCALE = 0.05  # multiplier for total damage dealt during a combo
 
 # Memory input blasting
-INPUT_ADDR = 0x1408CAEC8  # address controlling player inputs
-BLAST_INTERVAL = 0.001    # seconds
+INPUT_OFFSET = 0x8CAEC8  # offset for player input memory
+BLAST_INTERVAL = 0.001   # seconds
+
+# Battle-state monitoring
+BATTLE_STATE_ADDR = 0x1440C2614
 
 
 
@@ -125,56 +129,16 @@ action_map = {
 }
 
 # Mapping from action index to memory input value
-input_codes = {
-     0:   0,      # none
-     1:   4,      # left
-     2:   8,      # right
-     3:   2,      # down
-     4:   6,      # downleft
-     5:  10,      # downright
-     6:   1,      # up
-     7:   9,      # up_right
-     8:   5,      # up_left
-     9: 128,      # lp
-    10: 129,      # uplp
-    11: 130,      # downlp
-    12: 132,      # leftlp
-    13: 136,      # rightlp
-    14: 256,      # sp
-    15: 257,      # upsp
-    16: 260,      # leftsp
-    17: 258,      # downsp
-    18: 264,      # rightsp
-    19:  32,      # lk
-    20:  33,      # uplk
-    21:  34,      # downlk
-    22:  36,      # leftlk
-    23:  40,      # rightlk
-    24:  64,      # sk
-    25:  66,      # downsk
-    26:  65,      # upsk
-    27:  68,      # leftsk
-    28:  72,      # rightsk
-    29: 320,      # sk+sp
-    30: 324,      # left+sk+sp
-    31: 328,      # rightsksp
-    32: 321,      # upsksp
-    33: 322,      # downsksp
-    34: 392,      # rightlpsp
-    35: 388,      # leftlpsp
-    36: 385,      # uplpsp
-    37: 386,      # downlpsp
-    38: 384,      # lp+sp
-    39:  96,      # lk+sk
-    40:  97,      # uplksk
-    41:  98,      # downlksk
-    42: 100,      # left+lk+sk
-    43: 104,      # rightlksk
-    44: 160,      # lp+lk
-    45: 164,      # leftlplk
-    46: 168,      # rightlplk
-    47: 161,      # uplplk
-    48: 162,      # downlplk
+INPUT_CODES = {
+     0:   0,   1:   4,   2:   8,   3:   2,   4:   6,   5:  10,
+     6:   1,   7:   9,   8:   5,   9: 128,  10: 129,  11: 130,
+    12: 132,  13: 136,  14: 256,  15: 257,  16: 260,  17: 258,
+    18: 264,  19:  32,  20:  33,  21:  34,  22:  36,  23:  40,
+    24:  64,  25:  66,  26:  65,  27:  68,  28:  72,  29: 320,
+    30: 324,  31: 328,  32: 321,  33: 322,  34: 392,  35: 388,
+    36: 385,  37: 386,  38: 384,  39:  96,  40:  97,  41:  98,
+    42: 100,  43: 104,  44: 160,  45: 164,  46: 168,  47: 161,
+    48: 162,
 }
 
 
@@ -328,6 +292,7 @@ class KOFEnv(Env):
         super().__init__()
         self.window_index = int(window_index)
         self.process = None
+        self._wait_first_enter = True
         
 
         def log(msg: str) -> None:
@@ -414,6 +379,12 @@ class KOFEnv(Env):
         self.process.open()
         self.handle = self.process.handle
 
+        # Attach via pymem for additional reads
+        self.pm = pymem.Pymem(process_name)
+        module = pymem.process.module_from_name(self.pm.process_handle, process_name)
+        base = module.lpBaseOfDll
+        self.addr = base + INPUT_OFFSET
+
         def find_window(title: str, index: int) -> int:
             """Return the handle for the nth window with the given title."""
             handles: list[int] = []
@@ -441,7 +412,7 @@ class KOFEnv(Env):
         obs_dim = len(ADDR_KEYS) + 2*self.HISTORY_LEN
         self.observation_space = Box(0, 2**32-1, (obs_dim,), np.float32)
         MAX_HOLD = 10  # max hold time for actions
-        self.action_space = MultiDiscrete([len(action_map), MAX_HOLD+1])
+        self.action_space = Discrete(len(INPUT_CODES))
         log("Observation and action spaces configured")
 
         # store previous HPs for reward
@@ -466,15 +437,20 @@ class KOFEnv(Env):
         
 
       
-        self.n_actions = len(action_map)
+        self.n_actions = len(INPUT_CODES)
         self.action_counts = np.zeros(self.n_actions, dtype=int)
         self.bar_update_counter = 0
         self.bar_update_interval = 5   # redraw once every 5 steps
 
         # start memory input blasting
-        self.mem_input = MemoryInput(self.handle, INPUT_ADDR, BLAST_INTERVAL)
+        self.mem_input = MemoryInput(self.handle, self.addr, BLAST_INTERVAL)
         self.mem_input.start()
         log("Initialization complete")
+
+    def _code_from_action(self, a: int) -> int:
+        if a not in INPUT_CODES:
+            raise IndexError(a)
+        return INPUT_CODES[a]
 
     
     def _read(self, addr):
@@ -529,6 +505,10 @@ class KOFEnv(Env):
 
          # --- ensure no keys remain held on reset ---
         self.mem_input.set_input(0)
+
+        if self._wait_first_enter:
+            input("Press Enter to let the agent start…")
+            self._wait_first_enter = False
         
     
           # only after first episode
@@ -545,7 +525,7 @@ class KOFEnv(Env):
             print(
                 f"Episode {ep}: Return={ret:.2f} | Total={total_reward:.2f} | "
                 + ", ".join(
-                    f"{action_map[i]['name']}={pct_[i]}%" for i in range(self.n_actions)
+                    f"{action_map[i]['name']}={pct_[i]}%" for i in range(min(self.n_actions, len(action_map)))
                 )
             )
             print("-" * 60)
@@ -564,7 +544,9 @@ class KOFEnv(Env):
             
         
         time.sleep(1)
-        
+
+        while self.pm.read_uchar(BATTLE_STATE_ADDR) != 128:
+            time.sleep(0.05)
 
         obs = self._get_obs()
         obs = np.array(obs, dtype=np.float32)
@@ -601,7 +583,7 @@ class KOFEnv(Env):
         
 
 
-    def step(self, action):
+    def step(self, action: int):
         # single-step update
         obs_prev = self._last_obs
         self.nstep += 1
@@ -609,10 +591,13 @@ class KOFEnv(Env):
         safe_focus(self.hwnd)
 
 
+        if self.pm.read_uchar(BATTLE_STATE_ADDR) == 129:
+            return self._last_obs, 0.0, False, True, {"waiting": True}
+
         # 1) decode action
-        btn_idx = int(action[0])
+        btn_idx = int(action)
         # send input via memory blasting
-        self.mem_input.set_input(input_codes.get(btn_idx, 0))
+        self.mem_input.set_input(self._code_from_action(btn_idx))
         # Count the chosen action
         self.action_counts[btn_idx] += 1
 
@@ -861,7 +846,7 @@ class KOFEnv(Env):
             })
 
         # 14) final logging - single line update
-        m = action_map[btn_idx]
+        m = action_map.get(btn_idx, {'name': f'Action {btn_idx}', 'term_color': Fore.WHITE, 'plot_color': 'white'})
         status = (
             f"Step {self.nstep:5d} | Action: {m['name']} | "
             f"HP P1:{p1:.0f} P2:{p2:.0f} | "
