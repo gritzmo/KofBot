@@ -17,6 +17,7 @@ from colorama import init, Fore, Style
 import json
 import pywintypes
 import win32con
+import threading
 
 TF_ENABLE_ONEDNN_OPTS = 0  # Disable oneDNN optimizations for reproducibility
 
@@ -41,6 +42,10 @@ GUARD_CRUSH_BONUS     = 2.0
 # Reward scales for high-damage combos
 COMBO_HIT_BONUS    = 0.5   # bonus per hit beyond the first when a combo ends
 COMBO_DAMAGE_SCALE = 0.05  # multiplier for total damage dealt during a combo
+
+# Memory input blasting
+INPUT_ADDR = 0x1408CAEC8  # address controlling player inputs
+BLAST_INTERVAL = 0.001    # seconds
 
 
 
@@ -119,6 +124,23 @@ action_map = {
     12:{'keys':['i'],  'name':'Light Kick + Strong Kick',  'term_color':Fore.LIGHTGREEN_EX,'plot_color':'green'},
 }
 
+# Mapping from action index to memory input value
+input_codes = {
+    0: 0,
+    1: 4,     # left
+    2: 8,     # right
+    3: 1,     # up
+    4: 2,     # down
+    5: 128,   # light punch
+    6: 256,   # strong punch
+    7: 32,    # light kick
+    8: 64,    # strong kick
+    9: 320,   # strong punch + strong kick
+    10: 160,  # light punch + light kick
+    11: 384,  # light punch + strong punch
+    12: 96,   # light kick + strong kick
+}
+
 # Defeat threshold: HP > threshold means defeated
 DEFEAT_THRESHOLD = 200
 
@@ -139,6 +161,50 @@ def press_key(hwnd, key, hold=0.1):
     pydirectinput.keyDown(VK[key])
     time.sleep(hold)
     pydirectinput.keyUp(VK[key])
+
+class MemoryInput:
+    """Continuously blast input values to memory for low-latency actions."""
+
+    def __init__(self, handle: int, address: int, interval: float = BLAST_INTERVAL):
+        self.handle = handle
+        self.address = address
+        self.interval = interval
+        self.current = 0
+        self.running = False
+        self.thread: threading.Thread | None = None
+
+    def _write(self, value: int) -> None:
+        buf = ctypes.c_uint16(value & 0xFFFF)
+        bytes_written = ctypes.c_size_t()
+        ctypes.windll.kernel32.WriteProcessMemory(
+            self.handle, ctypes.c_void_p(self.address), byref(buf), sizeof(buf), byref(bytes_written)
+        )
+
+    def _loop(self) -> None:
+        ctypes.windll.winmm.timeBeginPeriod(1)
+        try:
+            while self.running:
+                self._write(self.current)
+                time.sleep(self.interval)
+                self._write(0)
+        finally:
+            ctypes.windll.winmm.timeEndPeriod(1)
+
+    def start(self) -> None:
+        if not self.running:
+            self.running = True
+            self.thread = threading.Thread(target=self._loop, daemon=True)
+            self.thread.start()
+
+    def stop(self) -> None:
+        self.running = False
+        if self.thread:
+            self.thread.join()
+            self.thread = None
+        self._write(0)
+
+    def set_input(self, value: int) -> None:
+        self.current = value
 
 # ---------------------------------------------------------------------------
 # Reward helper functions
@@ -368,9 +434,9 @@ class KOFEnv(Env):
         self.bar_update_counter = 0
         self.bar_update_interval = 5   # redraw once every 5 steps
 
-        # input buffer
-        self.key_buffer = None
-        self.buffer_remaining = 0
+        # start memory input blasting
+        self.mem_input = MemoryInput(self.handle, INPUT_ADDR, BLAST_INTERVAL)
+        self.mem_input.start()
         log("Initialization complete")
 
     
@@ -425,13 +491,7 @@ class KOFEnv(Env):
 
 
          # --- ensure no keys remain held on reset ---
-        if self.key_buffer:
-            for k in self.key_buffer:
-                pydirectinput.keyUp(VK[k])
-            self.key_buffer = None
-            self.buffer_remaining = 0
-        
-        self.key_buffer=None; self.buffer_remaining=0
+        self.mem_input.set_input(0)
         
     
           # only after first episode
@@ -556,18 +616,9 @@ class KOFEnv(Env):
 
         # 1) decode action
         btn_idx = int(action[0])
-        keys    = action_map[btn_idx]['keys']
-        if self.key_buffer and self.key_buffer != keys:
-            safe_focus(self.hwnd)
-            for k in self.key_buffer:
-                pydirectinput.keyUp(VK[k])
-            self.key_buffer = None
-        if keys and self.key_buffer != keys:
-            safe_focus(self.hwnd)
-            for k in keys:
-                pydirectinput.keyDown(VK[k])
-            self.key_buffer = keys.copy()
-        # 1) Count the chosen action
+        # send input via memory blasting
+        self.mem_input.set_input(input_codes.get(btn_idx, 0))
+        # Count the chosen action
         self.action_counts[btn_idx] += 1
 
         
@@ -737,6 +788,7 @@ class KOFEnv(Env):
                     "done": done
                 }) + "\n")
             self._last_obs = obs
+            self.mem_input.set_input(0)
             return obs, reward, True, False, {}
         if p2_hp > DEFEAT_THRESHOLD and p1_hp <= DEFEAT_THRESHOLD:
             self.round += 1
@@ -757,6 +809,7 @@ class KOFEnv(Env):
                     "done": done
                 }) + "\n")
             self._last_obs = obs_next
+            self.mem_input.set_input(0)
             return obs_next, reward, True, False, {}
 
         # ── NOW update combo_dmg in prev: ──
@@ -849,6 +902,8 @@ class KOFEnv(Env):
 
     def close(self):
         self.close_log()
+        if hasattr(self, 'mem_input'):
+            self.mem_input.stop()
         if self.game_proc is not None:
             try:
                 self.game_proc.terminate()

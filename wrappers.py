@@ -1,9 +1,7 @@
 import numpy as np
 from gymnasium import Env
 from gymnasium.spaces import Discrete, MultiDiscrete
-import pydirectinput
-from env import KOFEnv, action_map, VK
-import win32gui
+from env import KOFEnv, action_map
 
 class KOFActionRepeatEnv(Env):
     """
@@ -39,7 +37,6 @@ class KOFActionRepeatEnv(Env):
         log("Observation and action spaces set")
 
         self.frame_skip = int(frame_skip)
-        self.key_buffer = None
         log("Wrapper initialization complete")
 
     def reset(self, **kwargs):
@@ -47,12 +44,6 @@ class KOFActionRepeatEnv(Env):
         Calls orig_env.reset() and returns only obs.
         """
         obs, info = self.orig_env.reset(**kwargs)
-        # Release any held keys if necessary
-        if self.key_buffer:
-            win32gui.SetForegroundWindow(self.orig_env.hwnd)
-            for k in self.key_buffer:
-                pydirectinput.keyUp(VK[k])
-        self.key_buffer = None
         return obs, info
 
     def step(self, action: int):
@@ -66,14 +57,6 @@ class KOFActionRepeatEnv(Env):
         terminated = False
         truncated = False
         info_out = {}
-
-        # Release old keys if switching buttons
-        keys = action_map[int(action)]['keys']
-        if self.key_buffer and self.key_buffer != keys:
-            win32gui.SetForegroundWindow(self.orig_env.hwnd)
-            for k in self.key_buffer:
-                pydirectinput.keyUp(VK[k])
-            self.key_buffer = None
 
         for _ in range(self.frame_skip):
             md_action = np.array([int(action), 1], dtype=np.int64)
@@ -97,13 +80,6 @@ class KOFActionRepeatEnv(Env):
 
             if terminated or truncated:
                 break
-
-        # If done mid‐frame‐skip, release any held keys
-        if (terminated or truncated) and self.key_buffer:
-            win32gui.SetForegroundWindow(self.orig_env.hwnd)
-            for k in self.key_buffer:
-                pydirectinput.keyUp(VK[k])
-            self.key_buffer = None
 
         # Return exactly 5 values as required by Gymnasium v1.x and RLlib v2.x:
         return last_obs, total_reward, terminated, truncated, info_out
