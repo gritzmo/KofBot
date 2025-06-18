@@ -328,6 +328,10 @@ class KOFEnv(Env):
         self._transition_duration = 0.5
         self.round = 0
         self.nstep = 0
+        # Track whether either player has been marked defeated to avoid
+        # repeated defeat handling while animations are playing
+        self.p1_defeated = False
+        self.p2_defeated = False
         # attach to process
          # track how many consecutive frames the agent has moved TOWARD opponent
         self.approach_count = 0
@@ -537,6 +541,9 @@ class KOFEnv(Env):
         self.same_loc_count = 0
         self.repeat_count = 0
         self.last_action = None
+        # clear defeat state for new round
+        self.p1_defeated = False
+        self.p2_defeated = False
 
         # reset counters
         self.action_counts.fill(0)
@@ -752,13 +759,14 @@ class KOFEnv(Env):
         # 11) defeat checks
         p1_hp = self._read(ADDR['p1_hp'])
         p2_hp = self._read(ADDR['p2_hp'])
-        if p1_hp > DEFEAT_THRESHOLD and p2_hp <= DEFEAT_THRESHOLD:
-            reward -= 100 * self.lose_streak; print(f"❌ P1 defeated −{reward}")
+        if p1_hp > DEFEAT_THRESHOLD and p2_hp <= DEFEAT_THRESHOLD and not self.p1_defeated:
+            reward -= 100 * self.lose_streak
+            print(f"❌ P1 defeated −{reward}")
             self.round = 0
             self.lose_streak += 1
+            self.p1_defeated = True
             if self.pm.read_uchar(BATTLE_STATE_ADDR) == 129:
                 return self._last_obs, reward, False, True, {"waiting": True}
-           
 
             if self._log_fh:
                 self._log_fh.write(json.dumps({
@@ -771,15 +779,18 @@ class KOFEnv(Env):
             self._last_obs = obs
             self.mem_input.set_input(0)
             return obs, reward, True, False, {}
-        
+
         if p2_hp > DEFEAT_THRESHOLD and p1_hp <= DEFEAT_THRESHOLD:
-            self.round += 1
-            self.lose_streak = 0
-            if self.lose_streak == 0:
-                reward += 100
-                print(f"🎉 Redemption Bonus! + {reward}")
-                print()
-            reward += 1000 * self.round; print(f"🏆 P2 defeated + {reward}")
+            if not self.p2_defeated:
+                self.round += 1
+                self.lose_streak = 0
+                if self.lose_streak == 0:
+                    reward += 100
+                    print(f"🎉 Redemption Bonus! + {reward}")
+                    print()
+                reward += 1000 * self.round
+                print(f"🏆 P2 defeated + {reward}")
+                self.p2_defeated = True
             if self.pm.read_uchar(BATTLE_STATE_ADDR) == 129:
                 return self._last_obs, reward, False, True, {"waiting": True}
                 
