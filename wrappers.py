@@ -1,7 +1,7 @@
 import numpy as np
 from gymnasium import Env
 from gymnasium.spaces import Discrete, MultiDiscrete
-from env import KOFEnv, action_map
+from env import KOFEnv
 
 class KOFActionRepeatEnv(Env):
     """Wrap a :class:`KOFEnv` so agents see a simple ``Discrete`` action space.
@@ -54,6 +54,9 @@ class KOFActionRepeatEnv(Env):
         self.frame_skip = int(frame_skip)
         log("Wrapper initialization complete")
 
+        # Track cumulative reward across episodes for debugging/visualization
+        self.cumulative_reward = 0.0
+
     def reset(self, **kwargs):
         """
         Calls orig_env.reset() and returns only obs.
@@ -98,6 +101,14 @@ class KOFActionRepeatEnv(Env):
 
             if terminated or truncated:
                 break
+
+        # Update running tally and report for visibility when used interactively
+        self.cumulative_reward += total_reward
+        print(
+            f"[KOFActionRepeatEnv] step_reward={total_reward:.2f} "
+            f"total_reward={self.cumulative_reward:.2f}",
+            flush=True,
+        )
 
         # Return exactly 5 values as required by Gymnasium v1.x and RLlib v2.x:
         return last_obs, total_reward, terminated, truncated, info_out
