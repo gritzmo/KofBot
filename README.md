@@ -33,4 +33,6 @@ as the dataset location.
 
 The default configuration uses RLlib's R2D2 algorithm with an LSTM model so the
 agent can learn from sequences of actions and better exploit opponent patterns.
+R2D2 automatically sets the replay sequence length to ``max_seq_len`` plus
+``burn_in``, so you typically do not need to configure it manually.
 

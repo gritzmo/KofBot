@@ -83,7 +83,6 @@ def get_r2d2_config():
         "replay_buffer_config": {
             "type": "ReplayBuffer",
             "capacity": 500_000,
-            "replay_sequence_length": 20,
         },
     }
 
@@ -115,12 +114,6 @@ if __name__ == "__main__":
         default=0,
         help="When multiple game windows exist, attach to the Nth one (0-based).",
     )
-    args = parser.parse_args()
-
-    ray.init(ignore_reinit_error=True)
-    config = get_r2d2_config()
-    config["env_config"]["base_env_kwargs"]["window_index"] = args.window_index
-
     parser.add_argument(
         "--dataset-format",
         type=str,
@@ -131,6 +124,7 @@ if __name__ == "__main__":
 
     ray.init(ignore_reinit_error=True)
     config = get_r2d2_config()
+    config["env_config"]["base_env_kwargs"]["window_index"] = args.window_index
 
     # Determine training mode.
     mode = args.mode
