@@ -3,7 +3,8 @@ import numpy as np
 import ctypes
 from ctypes import byref, sizeof
 from gymnasium import Env
-from gymnasium.spaces import Box, MultiDiscrete
+from gymnasium.spaces import Box, Discrete
+from pymem import Pymem
 import win32gui
 import pydirectinput
 from collections import deque
@@ -12,7 +13,6 @@ import os
 import subprocess
 import win32gui
 import win32process
-from ReadWriteMemory import ReadWriteMemory
 from colorama import init, Fore, Style
 import json
 import pywintypes
@@ -119,6 +119,21 @@ action_map = {
     12:{'keys':['i'],  'name':'Light Kick + Strong Kick',  'term_color':Fore.LIGHTGREEN_EX,'plot_color':'green'},
 }
 
+# Input codes written directly to memory
+INPUT_MAP = [
+    0,      # none
+    4, 8, 2, 6, 10,                # directions
+    1, 9, 5,                       # jumps
+    128, 129, 130, 132, 136,       # light punch + directions
+    256, 257, 260, 258, 264,       # strong punch + directions
+    32, 33, 34, 36, 40,            # light kick + directions
+    64, 65, 66, 68, 72,            # strong kick + directions
+    320, 324, 328, 321, 322,       # sk+sp combos
+    392, 388, 385, 386, 384,       # lp+sp combos
+    96, 97, 98, 100, 104,          # lk+sk combos
+    160, 164, 168, 161, 162        # lp+lk combos
+]
+
 # Defeat threshold: HP > threshold means defeated
 DEFEAT_THRESHOLD = 200
 
@@ -223,6 +238,9 @@ class KOFEnv(Env):
                  launch_game: bool = False,
                  auto_start: bool = True):
         super().__init__()
+        ctypes.windll.winmm.timeBeginPeriod(1)
+        self.process_name = process_name
+        self.addr = 0x1408CAEC8
         self.window_index = int(window_index)
         self.process = None
         
@@ -242,6 +260,7 @@ class KOFEnv(Env):
             log(f"Logging enabled: {self.record_path}")
 
         self.auto_start = auto_start
+        self.first_reset = True
         self.game_proc = None
 
         if launch_game and game_exe_path:
@@ -297,19 +316,10 @@ class KOFEnv(Env):
         log("Window handle obtained")
 
         _, pid = win32process.GetWindowThreadProcessId(self.hwnd)
-        log(f"Attaching to PID {pid}")
-
-        self.rwm = ReadWriteMemory()
-        self.process = None
-        try:
-            self.process = self.rwm.get_process_by_id(pid)
-        except AttributeError:
-            self.process = None
-
-        if not self.process:
-              raise Exception(f"Process with PID {pid} not found.")
-        self.process.open()
-        self.handle = self.process.handle
+        log(f"Found PID {pid}")
+        self.pid = pid
+        self.pm = None
+        self.handle = None
 
         def find_window(title: str, index: int) -> int:
             """Return the handle for the nth window with the given title."""
@@ -337,8 +347,7 @@ class KOFEnv(Env):
         # expand obs‐space to include history
         obs_dim = len(ADDR_KEYS) + 2*self.HISTORY_LEN
         self.observation_space = Box(0, 2**32-1, (obs_dim,), np.float32)
-        MAX_HOLD = 10  # max hold time for actions
-        self.action_space = MultiDiscrete([len(action_map), MAX_HOLD+1])
+        self.action_space = Discrete(len(INPUT_MAP))
         log("Observation and action spaces configured")
 
         # store previous HPs for reward
@@ -363,14 +372,11 @@ class KOFEnv(Env):
         
 
       
-        self.n_actions = len(action_map)
+        self.n_actions = len(INPUT_MAP)
         self.action_counts = np.zeros(self.n_actions, dtype=int)
         self.bar_update_counter = 0
         self.bar_update_interval = 5   # redraw once every 5 steps
 
-        # input buffer
-        self.key_buffer = None
-        self.buffer_remaining = 0
         log("Initialization complete")
 
     
@@ -382,6 +388,10 @@ class KOFEnv(Env):
         ):
             raise ctypes.WinError()
         return buf.value
+
+    def _write_input(self, value: int):
+        if self.pm is not None:
+            self.pm.write_bytes(self.addr, value.to_bytes(2, 'little'), 2)
 
     def _get_obs(self):
         vals = [self._read(ADDR[k]) for k in ADDR_KEYS]
@@ -424,14 +434,20 @@ class KOFEnv(Env):
         
 
 
-         # --- ensure no keys remain held on reset ---
-        if self.key_buffer:
-            for k in self.key_buffer:
-                pydirectinput.keyUp(VK[k])
-            self.key_buffer = None
-            self.buffer_remaining = 0
-        
-        self.key_buffer=None; self.buffer_remaining=0
+        if self.pm is None:
+            self.pm = Pymem(self.process_name)
+            self.handle = self.pm.process_handle
+        self._write_input(0)
+        if self.first_reset:
+            print("Press Enter when game is ready.")
+            try:
+                input()
+            except KeyboardInterrupt:
+                self.first_reset = False
+                raise
+            self.first_reset = False
+        else:
+            time.sleep(5)
         
     
           # only after first episode
@@ -448,7 +464,7 @@ class KOFEnv(Env):
             print(
                 f"Episode {ep}: Return={ret:.2f} | Total={total_reward:.2f} | "
                 + ", ".join(
-                    f"{action_map[i]['name']}={pct_[i]}%" for i in range(self.n_actions)
+                    f"a{i}={pct_[i]}%" for i in range(self.n_actions)
                 )
             )
             print("-" * 60)
@@ -538,7 +554,7 @@ class KOFEnv(Env):
                 "done": False
             }) + "\n")
 
-        return obs, {}
+        return obs, {"ready": True}
 
 
         
@@ -554,20 +570,24 @@ class KOFEnv(Env):
         safe_focus(self.hwnd)
 
 
-        # 1) decode action
-        btn_idx = int(action[0])
-        keys    = action_map[btn_idx]['keys']
-        if self.key_buffer and self.key_buffer != keys:
-            safe_focus(self.hwnd)
-            for k in self.key_buffer:
-                pydirectinput.keyUp(VK[k])
-            self.key_buffer = None
-        if keys and self.key_buffer != keys:
-            safe_focus(self.hwnd)
-            for k in keys:
-                pydirectinput.keyDown(VK[k])
-            self.key_buffer = keys.copy()
-        # 1) Count the chosen action
+        if isinstance(action, (list, tuple, np.ndarray)):
+            btn_idx = int(action[0])
+        else:
+            btn_idx = int(action)
+
+        try:
+            value = INPUT_MAP[btn_idx]
+        except IndexError:
+            value = 0
+
+        try:
+            self._write_input(value)
+            time.sleep(0.008)
+            self._write_input(0)
+        except KeyboardInterrupt:
+            self._write_input(0)
+            raise
+
         self.action_counts[btn_idx] += 1
 
         
@@ -813,15 +833,12 @@ class KOFEnv(Env):
             })
 
         # 14) final logging - single line update
-        m = action_map[btn_idx]
         status = (
-            f"Step {self.nstep:5d} | Action: {m['name']} | "
+            f"Step {self.nstep:5d} | Action: {btn_idx} | "
             f"HP P1:{p1:.0f} P2:{p2:.0f} | "
             f"Return: {self.current_return:.2f}"
         )
-        # `term_color` prints nicely while avoiding issues when colours are used
-        # in other contexts such as Matplotlib plotting.
-        print(m['term_color'] + status + Style.RESET_ALL, end='\r', flush=True)
+        print(status, end='\r', flush=True)
 
         done = False
         if self._log_fh:
@@ -854,6 +871,14 @@ class KOFEnv(Env):
                 self.game_proc.terminate()
             except Exception:
                 pass
+
+    def __del__(self):
+        try:
+            if hasattr(self, "pm") and self.pm:
+                self._write_input(0)
+        except Exception:
+            pass
+        ctypes.windll.winmm.timeEndPeriod(1)
 
 
 
