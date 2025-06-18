@@ -195,6 +195,22 @@ class MemoryInput:
             self.running = True
             self.thread = threading.Thread(target=self._loop, daemon=True)
             self.thread.start()
+            # Ensure the blasting thread maintains high scheduling priority so
+            # input writes aren't delayed when the game window loses focus
+            try:
+                THREAD_SET_INFORMATION = 0x0020
+                THREAD_QUERY_INFORMATION = 0x0040
+                h = ctypes.windll.kernel32.OpenThread(
+                    THREAD_SET_INFORMATION | THREAD_QUERY_INFORMATION,
+                    False,
+                    self.thread.native_id,
+                )
+                ctypes.windll.kernel32.SetThreadPriority(
+                    h, ctypes.c_int(2)  # THREAD_PRIORITY_HIGHEST
+                )
+                ctypes.windll.kernel32.CloseHandle(h)
+            except Exception:
+                pass
 
     def stop(self) -> None:
         self.running = False
@@ -384,6 +400,14 @@ class KOFEnv(Env):
               raise Exception(f"Process with PID {pid} not found.")
         self.process.open()
         self.handle = self.process.handle
+        try:
+            # Boost game process priority so it keeps running at full speed even
+            # when the window is not focused
+            win32process.SetPriorityClass(
+                self.handle, win32process.HIGH_PRIORITY_CLASS
+            )
+        except Exception:
+            pass
 
         # Attach via pymem for additional reads
         self.pm = pymem.Pymem(process_name)
