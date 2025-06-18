@@ -4,10 +4,14 @@ from gymnasium.spaces import Discrete, MultiDiscrete
 from env import KOFEnv, action_map
 
 class KOFActionRepeatEnv(Env):
-    """
-    Wraps your original KOFEnv (MultiDiscrete space) into a Discrete(n_buttons) environment
-    by “repeating” each chosen button press for exactly `frame_skip` internal ticks of KOFEnv.
-    Also collapses the 5‐tuple (obs, rew, done, truncated, info) into (obs, rew, done, info).
+    """Wrap a :class:`KOFEnv` so agents see a simple ``Discrete`` action space.
+
+    Each chosen button press is repeated for ``frame_skip`` internal ticks of the
+    underlying environment.  The wrapper works with both the original
+    ``MultiDiscrete`` action space as well as newer ``Discrete`` versions.
+
+    It also converts 4-tuples returned by older envs into the 5-value tuple
+    expected by Gymnasium.
     """
     def __init__(self, base_env_factory, frame_skip: int = 1):
         """
@@ -25,10 +29,21 @@ class KOFActionRepeatEnv(Env):
         self.orig_env: KOFEnv = base_env_factory()
         log("Base environment created")
 
-        # Ensure original action_space is MultiDiscrete([n_buttons, max_hold])
-        assert isinstance(self.orig_env.action_space, MultiDiscrete), \
-            "KOFEnv.action_space must be MultiDiscrete([n_buttons, max_hold])"
-        self.num_buttons = int(self.orig_env.action_space.nvec[0])
+        # Determine whether the base env expects a MultiDiscrete or Discrete
+        # action. Older versions of :class:`KOFEnv` used ``MultiDiscrete`` where
+        # the first element was the button index.  Newer versions expose a plain
+        # ``Discrete`` space.  Support both so the wrapper works across versions.
+        if isinstance(self.orig_env.action_space, MultiDiscrete):
+            self._md_env = True
+            self.num_buttons = int(self.orig_env.action_space.nvec[0])
+        elif isinstance(self.orig_env.action_space, Discrete):
+            self._md_env = False
+            self.num_buttons = int(self.orig_env.action_space.n)
+        else:
+            raise TypeError(
+                "Unsupported action_space type: "
+                f"{type(self.orig_env.action_space).__name__}"
+            )
 
         # Expose only Discrete(num_buttons) to the agent
         self.action_space = Discrete(self.num_buttons)
@@ -59,7 +74,10 @@ class KOFActionRepeatEnv(Env):
         info_out = {}
 
         for _ in range(self.frame_skip):
-            md_action = np.array([int(action), 1], dtype=np.int64)
+            if self._md_env:
+                md_action = np.array([int(action), 1], dtype=np.int64)
+            else:
+                md_action = int(action)
             out = self.orig_env.step(md_action)
 
             if len(out) == 5:
