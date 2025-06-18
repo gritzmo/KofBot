@@ -10,9 +10,25 @@ from ray.rllib.algorithms.dqn import DQN
 import argparse
 
 def kof_rainbow_env_creator(env_config: EnvContext):
+    """Create the KOF environment used by RLlib.
+
+    RLlib assigns each remote worker a ``worker_index`` starting at 1 while the
+    local worker (driver) uses index 0.  To map these workers to emulator
+    windows we convert the RLlib index to a zero-based ``window_index`` where the
+    driver and first remote worker both map to window ``0``.
+    """
+
     frame_skip = env_config.get("frame_skip", 1)
     base_env_cls = env_config["base_env_cls"]
     base_env_kwargs = env_config.get("base_env_kwargs", {})
+
+    window_idx = env_config.worker_index - 1 if env_config.worker_index > 0 else 0
+    print(
+        f"[kof_rainbow_env_creator] worker_index={env_config.worker_index} -> window_idx={window_idx}",
+        flush=True,
+    )
+    base_env_kwargs["window_index"] = window_idx
+
 
     def factory():
         return base_env_cls(**base_env_kwargs)
@@ -32,27 +48,35 @@ def get_rainbow_rdqn_config():
                 "game_exe_path": None,
                 "launch_game": False,
                 "auto_start": True,
+                "window_index": 0,
             },
         },
-        "num_workers": 1,
+        "num_workers": 2,
         "num_gpus": 0,
         "framework": "torch",
         "batch_mode": "complete_episodes",
         "model": {
-            "use_lstm": True,
+            "use_lstm": False,
             "lstm_cell_size": 256,
-            "noisy": True,
-            "dueling": True,
-            "num_atoms": 51,
-            "v_min": -10.0,
-            "v_max": 10.0,
+             # Provide a sequence length so RLlib can create dummy batches with
+            # ``seq_lens`` when initializing the RNN. Without this, the policy
+            # fails an assertion in ``recurrent_net.forward``.
+            "max_seq_len": 20,
+           
+            
         },
+        # Rollout fragments are truncated to this length so that a valid
+        # ``seq_lens`` tensor is available when the model processes the batch.
+        "rollout_fragment_length": 20,
+        "noisy": True,
+        "dueling": True,
+        "num_atoms": 51,
+        "v_min": -10.0,
+        "v_max": 10.0,
         "n_step": 3,
-        "replay_sequence_length": 20,
         "burn_in": 5,
-        "zero_init_states": False,
         "exploration_config": {},
-        "learning_starts": 100_000,
+        "num_steps_sampled_before_learning_starts": 100_000,
         "train_batch_size": 64,
         "target_network_update_freq": 1_000,
         "lr": 1e-4,
@@ -61,11 +85,9 @@ def get_rainbow_rdqn_config():
         # Replay buffer configuration switched to the new API in RLlib 2.x.
         # Explicitly select the prioritized buffer type and associated params.
         "replay_buffer_config": {
-            "type": "PrioritizedReplayBuffer",
+            "type": "ReplayBuffer",
             "capacity": 500_000,
-            "prioritized_replay_alpha": 0.6,
-            "prioritized_replay_beta": 0.4,
-            "prioritized_replay_eps": 1e-6,
+            "replay_sequence_length": 20,
         },
     }
 
@@ -91,6 +113,18 @@ if __name__ == "__main__":
         default=None,
         help="Path to an offline dataset (JSON format) used when in offline mode.",
     )
+    parser.add_argument(
+        "--window-index",
+        type=int,
+        default=0,
+        help="When multiple game windows exist, attach to the Nth one (0-based).",
+    )
+    args = parser.parse_args()
+
+    ray.init(ignore_reinit_error=True)
+    config = get_rainbow_rdqn_config()
+    config["env_config"]["base_env_kwargs"]["window_index"] = args.window_index
+
     parser.add_argument(
         "--dataset-format",
         type=str,

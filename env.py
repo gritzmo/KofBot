@@ -10,9 +10,13 @@ from collections import deque
 import torch
 import os
 import subprocess
+import win32gui
+import win32process
 from ReadWriteMemory import ReadWriteMemory
 from colorama import init, Fore, Style
 import json
+import pywintypes
+import win32con
 
 TF_ENABLE_ONEDNN_OPTS = 0  # Disable oneDNN optimizations for reproducibility
 
@@ -46,6 +50,12 @@ pydirectinput.PAUSE = 0
 # Initialize colorama
 init(autoreset=True)
 
+def safe_focus(hwnd: int) -> None:
+    try:
+        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+        win32gui.SetForegroundWindow(hwnd)
+    except pywintypes.error:
+        pass
 
 
 # Addresses in fixed order
@@ -113,15 +123,22 @@ action_map = {
 DEFEAT_THRESHOLD = 200
 
 # High-speed tap for instantaneous inputs
-def fast_press(keys, hold=0.005):
+def fast_press(hwnd, keys, hold=0.005):
+    """Press a list of keys quickly while ensuring the game window has focus."""
+    safe_focus(hwnd)
     for k in keys:
         pydirectinput.keyDown(VK[k])
     time.sleep(hold)
     for k in keys:
         pydirectinput.keyUp(VK[k])
+
 # Single key press
-def press_key(key, hold=0.1):
-    pydirectinput.keyDown(VK[key]); time.sleep(hold); pydirectinput.keyUp(VK[key])
+def press_key(hwnd, key, hold=0.1):
+    """Press a single key while ensuring the game window has focus."""
+    safe_focus(hwnd)
+    pydirectinput.keyDown(VK[key])
+    time.sleep(hold)
+    pydirectinput.keyUp(VK[key])
 
 # ---------------------------------------------------------------------------
 # Reward helper functions
@@ -200,11 +217,15 @@ class KOFEnv(Env):
     def __init__(self,
                  process_name: str = "KingOfFighters2002UM_x64.exe",
                  window_title: str = "King of Fighters 2002 Unlimited Match",
+                 window_index: int = 0,
                  record_path: str | None = None,
                  game_exe_path: str | None = None,
                  launch_game: bool = False,
                  auto_start: bool = True):
         super().__init__()
+        self.window_index = int(window_index)
+        self.process = None
+        
 
         def log(msg: str) -> None:
             """Utility for initialization progress messages."""
@@ -249,29 +270,61 @@ class KOFEnv(Env):
         self.FWD_BONUS = 0.5        # once you hit 5 consecutive, give +0.1
             
         self.zerolimit = 0
-        log(f"Searching for process '{process_name}'")
+        log(f"Locating window titled '{window_title}' (index {self.window_index})")
+        hwnds: list[int] = []
+
+        def _enum_handler(hwnd, _):
+            if win32gui.GetWindowText(hwnd) == window_title:
+                hwnds.append(hwnd)
+
+        # Wait briefly if a game was just launched so the window can appear
+        for _ in range(20):
+            hwnds.clear()
+            win32gui.EnumWindows(_enum_handler, None)
+            if len(hwnds) > self.window_index or self.game_proc is None:
+                break
+            time.sleep(0.5)
+
+        if self.game_proc is not None:
+            # Filter by PID of launched game
+            pid = self.game_proc.pid
+            hwnds = [h for h in hwnds if win32process.GetWindowThreadProcessId(h)[1] == pid]
+
+        if not self.process:
+            if len(hwnds) <= self.window_index:
+             raise Exception(f"Game window not found at index {self.window_index}; found {len(hwnds)} windows with that title")
+        self.hwnd = hwnds[self.window_index]
+        log("Window handle obtained")
+
+        _, pid = win32process.GetWindowThreadProcessId(self.hwnd)
+        log(f"Attaching to PID {pid}")
+
         self.rwm = ReadWriteMemory()
         self.process = None
-        if self.game_proc is not None:
-            try:
-                self.process = self.rwm.get_process_by_id(self.game_proc.pid)
-            except AttributeError:
-                self.process = None
+        try:
+            self.process = self.rwm.get_process_by_id(pid)
+        except AttributeError:
+            self.process = None
 
         if not self.process:
-            self.process = self.rwm.get_process_by_name(process_name)
-
-        if not self.process:
-            raise Exception(f"Process '{process_name}' not found.")
-        log("Opening process handle")
+              raise Exception(f"Process with PID {pid} not found.")
         self.process.open()
         self.handle = self.process.handle
 
-        log(f"Looking for window titled '{window_title}'")
-        self.hwnd = win32gui.FindWindow(None, window_title)
-        if not self.hwnd:
-            raise Exception("Game window not found; check `window_title`.")
-        log("Window handle obtained")
+        def find_window(title: str, index: int) -> int:
+            """Return the handle for the nth window with the given title."""
+            handles: list[int] = []
+            def cb(hwnd, _):
+                if win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd) == title:
+                    handles.append(hwnd)
+            win32gui.EnumWindows(cb, None)
+            if index >= len(handles):
+                raise Exception(
+                    f"Game window not found; title='{title}', index={index}."
+                )
+            return handles[index]
+
+        
 
 
 
@@ -426,7 +479,7 @@ class KOFEnv(Env):
                     if raw_p1 > 0 and raw_p2 > 0:
                         print(f"Current Guard: P1:{raw_p1:.0f} P2:{raw_p2:.0f}")
                         print("Pressed Enter.")
-                        press_key('enter', hold=0.2)
+                        press_key(self.hwnd, 'enter', hold=0.2)
                     else:
                         print("Moving On...")
             raw_p1 = self._read(ADDR['p1_guard'])
@@ -438,23 +491,24 @@ class KOFEnv(Env):
                     time.sleep(1)
                 print()
                 print("Selecting Endless Mode...")
-                press_key('enter', hold=0.2)
+                press_key(self.hwnd, 'enter', hold=0.2)
                 for sec in range(3,0,-1):
                     print(f"Waiting {sec} Seconds To Select Character...", end='\r', flush=True)
                     time.sleep(1)
                 print()
                 print("Selecting Character: Angel")
                 for _ in range(5):
-                    press_key('right', hold=0.1)
+                    press_key(self.hwnd, 'right', hold=0.1)
                     print(f"Pressed Right {_} times...", end='\r', flush=True)
                     time.sleep(2)
                 for _ in range(4):
-                    press_key('down', hold=0.1)
+                    press_key(self.hwnd, 'down', hold=0.1)
                     print(f"Pressed Down {_} times...", end='\r', flush=True)
                     time.sleep(2)
-                press_key('enter', hold=0.1)
+                press_key(self.hwnd, 'enter', hold=0.1)
                 print("CHARACTER SELECTED!")
 
+        time.sleep(1)
         
 
         obs = self._get_obs()
@@ -497,20 +551,22 @@ class KOFEnv(Env):
         obs_prev = self._last_obs
         self.nstep += 1
         STRIKING_RANGE = 63
-        win32gui.SetForegroundWindow(self.hwnd)
+        safe_focus(self.hwnd)
+
 
         # 1) decode action
         btn_idx = int(action[0])
         keys    = action_map[btn_idx]['keys']
         if self.key_buffer and self.key_buffer != keys:
+            safe_focus(self.hwnd)
             for k in self.key_buffer:
                 pydirectinput.keyUp(VK[k])
             self.key_buffer = None
         if keys and self.key_buffer != keys:
+            safe_focus(self.hwnd)
             for k in keys:
                 pydirectinput.keyDown(VK[k])
             self.key_buffer = keys.copy()
-
         # 1) Count the chosen action
         self.action_counts[btn_idx] += 1
 
@@ -691,8 +747,7 @@ class KOFEnv(Env):
                 print()
             reward += 100 * self.round; print(f"🏆 P2 defeated + {reward}")
             time.sleep(11)
-            obs_next, _ = self.reset()
-            done = True
+
             if self._log_fh:
                 self._log_fh.write(json.dumps({
                     "obs": None if obs_prev is None else obs_prev.tolist(),
