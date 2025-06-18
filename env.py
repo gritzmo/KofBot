@@ -112,21 +112,7 @@ VK = {
 # they are not valid Matplotlib colors.  To allow both colourful printing and
 # optional plotting, each action stores a `term_color` for console messages and
 # an `plot_color` using a regular Matplotlib colour name.
-action_map = {
-    0:{'keys':[],      'name':'Nothing',                    'term_color':Fore.WHITE,       'plot_color':'white'},
-    1:{'keys':['left'],'name':'Move Left',                  'term_color':Fore.CYAN,        'plot_color':'cyan'},
-    2:{'keys':['right'],'name':'Move Right',                'term_color':Fore.CYAN,        'plot_color':'cyan'},
-    3:{'keys':['up'],  'name':'Jump',                      'term_color':Fore.MAGENTA,     'plot_color':'magenta'},
-    4:{'keys':['down'],'name':'Crouch',                    'term_color':Fore.MAGENTA,     'plot_color':'magenta'},
-    5:{'keys':['7'],   'name':'Light Punch',               'term_color':Fore.BLUE,        'plot_color':'blue'},
-    6:{'keys':['8'],   'name':'Strong Punch',              'term_color':Fore.LIGHTRED_EX, 'plot_color':'red'},
-    7:{'keys':['9'],   'name':'Light Kick',                'term_color':Fore.GREEN,       'plot_color':'green'},
-    8:{'keys':['0'],   'name':'Strong Kick',               'term_color':Fore.RED,         'plot_color':'darkred'},
-    9:{'keys':['u'],   'name':'Strong Punch + Strong Kick','term_color':Fore.CYAN,        'plot_color':'cyan'},
-    10:{'keys':['p'],  'name':'Light Punch + Light Kick',  'term_color':Fore.MAGENTA,     'plot_color':'magenta'},
-    11:{'keys':['o'],  'name':'Light Punch + Strong Punch','term_color':Fore.BLUE,        'plot_color':'blue'},
-    12:{'keys':['i'],  'name':'Light Kick + Strong Kick',  'term_color':Fore.LIGHTGREEN_EX,'plot_color':'green'},
-}
+
 
 # Mapping from action index to memory input value
 INPUT_CODES = {
@@ -523,11 +509,9 @@ class KOFEnv(Env):
             pct_ = (self.action_counts / total * 100).round(1)
             total_reward = sum(self.episode_rewards)
             print(
-                f"Episode {ep}: Return={ret:.2f} | Total={total_reward:.2f} | "
-                + ", ".join(
-                    f"{action_map[i]['name']}={pct_[i]}%" for i in range(min(self.n_actions, len(action_map)))
+                f"Episode {ep}: Return={ret:.2f} | Total={total_reward:.2f}"
                 )
-            )
+            
             print("-" * 60)
 
         # reset per-episode state
@@ -588,8 +572,7 @@ class KOFEnv(Env):
         obs_prev = self._last_obs
         self.nstep += 1
         STRIKING_RANGE = 63
-        safe_focus(self.hwnd)
-
+        
 
         if self.pm.read_uchar(BATTLE_STATE_ADDR) == 129:
             return self._last_obs, 0.0, False, True, {"waiting": True}
@@ -846,15 +829,13 @@ class KOFEnv(Env):
             })
 
         # 14) final logging - single line update
-        m = action_map.get(btn_idx, {'name': f'Action {btn_idx}', 'term_color': Fore.WHITE, 'plot_color': 'white'})
+      
         status = (
-            f"Step {self.nstep:5d} | Action: {m['name']} | "
+            f"Step {self.nstep:5d}  "
             f"HP P1:{p1:.0f} P2:{p2:.0f} | "
             f"Return: {self.current_return:.2f}"
         )
-        # `term_color` prints nicely while avoiding issues when colours are used
-        # in other contexts such as Matplotlib plotting.
-        print(m['term_color'] + status + Style.RESET_ALL, end='\r', flush=True)
+    
 
         done = False
         if self._log_fh:

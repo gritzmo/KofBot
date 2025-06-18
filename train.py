@@ -1,6 +1,6 @@
 import time
 import os
-from env import KOFEnv, action_map
+from env import KOFEnv
 from wrappers import KOFActionRepeatEnv
 
 from ray.rllib.env.env_context import EnvContext
@@ -51,7 +51,7 @@ def get_rainbow_rdqn_config():
                 "window_index": 0,
             },
         },
-        "num_workers": 1,
+        "num_workers": 2,
         "num_gpus": 0,
         "framework": "torch",
         "batch_mode": "complete_episodes",
